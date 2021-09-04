@@ -15,7 +15,7 @@ Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
 Sobol = "ed01d8cd-4d21-5b2a-85b4-cc3bdc58bad4"
 
 [compat]
-AbstractGPs = "0.3"
+AbstractGPs = "0.3, 0.5"
 ChainRulesCore = "0.10"
 IntervalArithmetic = "0.17, 0.18, 0.19"
 NonconvexCore = "0.1.4"
