@@ -17,7 +17,7 @@ Sobol = "ed01d8cd-4d21-5b2a-85b4-cc3bdc58bad4"
 [compat]
 AbstractGPs = "0.3"
 ChainRulesCore = "0.10, 1"
-IntervalArithmetic = "0.17, 0.18, 0.19"
+IntervalArithmetic = "0.17, 0.18, 0.19, 0.20"
 NonconvexCore = "0.1.4"
 NonconvexIpopt = "0.1.2"
 Parameters = "0.12"
