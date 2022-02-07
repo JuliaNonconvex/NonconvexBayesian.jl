@@ -211,8 +211,7 @@ function surrogate_model(vecmodel::VecModel; kwargs...)
         vcat(ineq_constraints1, ineq_constraints2),
     )
     return VecModel(
-        obj, eq_constraints, ineq_constraints, vecmodel.box_min,
-        vecmodel.box_max, vecmodel.init, vecmodel.integer,
+        obj, eq_constraints, ineq_constraints, vecmodel.sd_constraints, vecmodel.box_min, vecmodel.box_max, vecmodel.init, vecmodel.integer,
     ), surrogates
 end
 
