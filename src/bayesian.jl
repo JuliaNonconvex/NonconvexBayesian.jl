@@ -135,21 +135,20 @@ function (s::ZeroOrderGPSurrogate)(x)
   	    return Interval.(y, y)
     else
         if eltype(s.y) <: Real
-            _m, _v = mean_and_var(posterior(
-                s.gps[1](s.X, s.noise), s.y,
-            ), [x])
-            m, v = _m[1], _v[1]
+            return _call_gp(s.gps[1], x, s.X, s.y, s.noise, s.std_multiple)
         else
-            ms_vs = map(1:s.N) do i
-                _gp = s.gps[i](s.X, s.noise)
-                mean_and_var(posterior(_gp, getindex.(s.y, i)), [x])
-            end
-            m = reduce(vcat, getindex.(ms_vs, 1))
-            v = reduce(vcat, getindex.(ms_vs, 2))
+            return map(i -> _call_gp(s.gps[i], x, s.X, getindex.(s.y, i), s.noise, s.std_multiple), 1:length(s.gps))
         end
-        r = s.std_multiple .* sqrt.(v)
-        return Interval.(m .- r, m .+ r)
     end
+end
+
+function _call_gp(gp, x, X, y, noise, std_multiple)
+    _m, _v = mean_and_var(posterior(
+        gp(X, noise), y,
+    ), [x])
+    m, v = _m[1], _v[1]
+    r = std_multiple * sqrt(v)
+    return Interval(m - r, m + r)
 end
 
 function surrogate(f, x; kwargs...)
@@ -159,7 +158,9 @@ function surrogate(f, x; kwargs...)
     return s
 end
 
-_lower_f(s) = x -> getproperty.(s(x), :lo)
+get_lo(x) = x.lo
+get_lo(x::AbstractVector) = map(get_lo, x)
+_lower_f(s) = get_lo ∘ s
 _equality_f(s) = x -> begin
     t = s(x)
     return [getproperty.(t, :lo); .- getproperty(t, :hi)]
@@ -187,14 +188,14 @@ function surrogate_model(vecmodel::VecModel; kwargs...)
         !(:expensive in c.flags)
     end
     eq_constraints = VectorOfFunctions(cheap_eq_constraints)
-    ineq_constraints1 = mapreduce(vcat, expensive_eq_constraints; init = Union{}[]) do c
+    ineq_constraints1 = Tuple(mapreduce(vcat, expensive_eq_constraints; init = Union{}[]) do c
         @assert c isa EqConstraint
         s = surrogate(c, copy(x0); kwargs...)
         push!(surrogates, s)
         return IneqConstraint(
             _equality_f(s), [zero.(c.rhs); zero.(c.rhs)], c.dim * 2, c.flags,
         )
-    end
+    end)
     ineq_constraints2 = map(vecmodel.ineq_constraints.fs) do c
         @assert c isa IneqConstraint
         if :expensive in c.flags
@@ -208,11 +209,11 @@ function surrogate_model(vecmodel::VecModel; kwargs...)
         end
     end
     ineq_constraints = VectorOfFunctions(
-        vcat(ineq_constraints1, ineq_constraints2),
+        (ineq_constraints1..., ineq_constraints2...),
     )
     return VecModel(
         obj, eq_constraints, ineq_constraints, vecmodel.sd_constraints, vecmodel.box_min, vecmodel.box_max, vecmodel.init, vecmodel.integer,
-    ), surrogates
+    ), Tuple(surrogates)
 end
 
 function update_surrogates!(model, surrogates, x)
@@ -228,15 +229,15 @@ function update_surrogates!(model, surrogates, x)
     return o, i, e
 end
 
-@params struct BayesOptOptions
-    sub_options
+struct BayesOptOptions{S, N <: NamedTuple}
+    sub_options::S
     maxiter::Int
     initialize::Bool
     ninit::Int
     ctol::Float64
     ftol::Float64
     postoptimize::Bool
-    nt::NamedTuple
+    nt::N
 end
 function BayesOptOptions(;
     sub_options = IpoptOptions(),
@@ -276,20 +277,20 @@ function BayesOptOptions(;
     )
 end
 
-@params mutable struct BayesOptWorkspace <: Workspace
-    model::VecModel
-    sub_workspace
-    x0::AbstractVector
-    options::BayesOptOptions
-    surrogates::AbstractVector
+mutable struct BayesOptWorkspace{M <: VecModel, S1, X <: AbstractVector, O <: BayesOptOptions, S2 <: Union{Tuple, AbstractVector}} <: Workspace
+    model::M
+    sub_workspace::S1
+    x0::X
+    options::O
+    surrogates::S2
 end
 
-@params struct BayesOptResult <: AbstractResult
-    minimizer
-    minimum
+struct BayesOptResult{M1, M2, S1 <: AbstractResult, S2} <: AbstractResult
+    minimizer::M1
+    minimum::M2
     niters::Int
-    sub_result::AbstractResult
-    surrogates
+    sub_result::S1
+    surrogates::S2
 end
 
 # ScaledSobolIterator adapted from BayesianOptimization.jl

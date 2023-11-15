@@ -4,6 +4,18 @@ using LinearAlgebra, Test
 f(x::AbstractVector) = sqrt(x[2])
 g(x::AbstractVector, a, b) = (a*x[1] + b)^3 - x[2]
 
+@testset "Surrogate" begin
+    x = zeros(2)
+
+    sf1 = NonconvexBayesian.ZeroOrderGPSurrogate(sum, x)
+    lsf1 = NonconvexBayesian._lower_f(sf1)
+    Zygote.gradient(lsf1, x)
+
+    sf2 = NonconvexBayesian.ZeroOrderGPSurrogate(x -> x.^2, x)
+    lsf2 = NonconvexBayesian._lower_f(sf2)
+    Zygote.jacobian(lsf2, x)
+end
+
 @testset "Cheap objective and constraints" begin
     @testset "Fit prior: $fit_prior" for fit_prior in (true, false)
         m = Model()
