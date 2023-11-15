@@ -1,8 +1,9 @@
 using NonconvexBayesian, NonconvexIpopt, NonconvexNLopt
 using LinearAlgebra, Test
+import Zygote
 
 f(x::AbstractVector) = sqrt(x[2])
-g(x::AbstractVector, a, b) = (a*x[1] + b)^3 - x[2]
+g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
 
 @testset "Surrogate" begin
     x = zeros(2)
@@ -11,7 +12,7 @@ g(x::AbstractVector, a, b) = (a*x[1] + b)^3 - x[2]
     lsf1 = NonconvexBayesian._lower_f(sf1)
     Zygote.gradient(lsf1, x)
 
-    sf2 = NonconvexBayesian.ZeroOrderGPSurrogate(x -> x.^2, x)
+    sf2 = NonconvexBayesian.ZeroOrderGPSurrogate(x -> x .^ 2, x)
     lsf2 = NonconvexBayesian._lower_f(sf2)
     Zygote.jacobian(lsf2, x)
 end
@@ -26,12 +27,17 @@ end
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0), maxiter = 10, ctol = 1e-4,
-            ninit = 2, initialize = true, postoptimize = false, fit_prior = fit_prior,
+            sub_options = IpoptOptions(print_level = 0),
+            maxiter = 10,
+            ctol = 1e-4,
+            ninit = 2,
+            initialize = true,
+            postoptimize = false,
+            fit_prior = fit_prior,
         )
         r = optimize(m, alg, [1.234, 2.345], options = options)
-        @test abs(r.minimum - sqrt(8/27)) < 1e-3
-        @test norm(r.minimizer - [1/3, 8/27]) < 1e-3
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
 end
 
@@ -42,17 +48,23 @@ end
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, x -> g(x, 2, 0))
         add_ineq_constraint!(m, x -> g(x, -1, 1))
-        add_eq_constraint!(m, x -> sum(x) - 1/3 - 8/27)
+        add_eq_constraint!(m, x -> sum(x) - 1 / 3 - 8 / 27)
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0), maxiter = 10, ctol = 1e-4,
-            ninit = 2, initialize = true, postoptimize = false, skip = 2, every = 2,
+            sub_options = IpoptOptions(print_level = 0),
+            maxiter = 10,
+            ctol = 1e-4,
+            ninit = 2,
+            initialize = true,
+            postoptimize = false,
+            skip = 2,
+            every = 2,
             fit_prior = fit_prior,
         )
         r = optimize(m, alg, [1.234, 2.345], options = options)
-        @test abs(r.minimum - sqrt(8/27)) < 1e-3
-        @test norm(r.minimizer - [1/3, 8/27]) < 1e-3
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
 end
 
@@ -63,16 +75,21 @@ end
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, x -> g(x, 2, 0))
         add_ineq_constraint!(m, x -> g(x, -1, 1))
-        add_eq_constraint!(m, x -> sum(x) - 1/3 - 8/27)
+        add_eq_constraint!(m, x -> sum(x) - 1 / 3 - 8 / 27)
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0), maxiter = 10, ctol = 1e-4,
-            ninit = 2, initialize = true, postoptimize = true, fit_prior = fit_prior,
+            sub_options = IpoptOptions(print_level = 0),
+            maxiter = 10,
+            ctol = 1e-4,
+            ninit = 2,
+            initialize = true,
+            postoptimize = true,
+            fit_prior = fit_prior,
         )
         r = optimize(m, alg, [1.234, 2.345], options = options)
-        @test abs(r.minimum - sqrt(8/27)) < 1e-5
-        @test norm(r.minimizer - [1/3, 8/27]) < 1e-5
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-5
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-5
     end
 end
 
@@ -83,16 +100,22 @@ end
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, x -> g(x, 2, 0))
         add_ineq_constraint!(m, x -> g(x, -1, 1))
-        add_eq_constraint!(m, x -> sum(x) - 1/3 - 8/27)
+        add_eq_constraint!(m, x -> sum(x) - 1 / 3 - 8 / 27)
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0), maxiter = 10, ctol = 1e-4,
-            initialize = false, postoptimize = false, skip = 2, every = 2, fit_prior = fit_prior,
+            sub_options = IpoptOptions(print_level = 0),
+            maxiter = 10,
+            ctol = 1e-4,
+            initialize = false,
+            postoptimize = false,
+            skip = 2,
+            every = 2,
+            fit_prior = fit_prior,
         )
         r = optimize(m, alg, [1.234, 2.345], options = options)
-        @test abs(r.minimum - sqrt(8/27)) < 1e-5
-        @test norm(r.minimizer - [1/3, 8/27]) < 1e-5
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-5
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-5
     end
 end
 
@@ -106,12 +129,18 @@ end
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0), maxiter = 100, ctol = 1e-4,
-            ninit = 5, initialize = true, postoptimize = false, last = 20, fit_prior = fit_prior,
+            sub_options = IpoptOptions(print_level = 0),
+            maxiter = 100,
+            ctol = 1e-4,
+            ninit = 5,
+            initialize = true,
+            postoptimize = false,
+            last = 20,
+            fit_prior = fit_prior,
         )
         r = optimize(m, alg, [1.234, 2.345], options = options)
-        @test abs(r.minimum - sqrt(8/27)) < 1e-3
-        @test norm(r.minimizer - [1/3, 8/27]) < 1e-3
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
 end
 
@@ -125,12 +154,18 @@ end
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0), maxiter = 20, ctol = 1e-4,
-            ninit = 2, initialize = true, postoptimize = false, last = 10, fit_prior = fit_prior,
+            sub_options = IpoptOptions(print_level = 0),
+            maxiter = 20,
+            ctol = 1e-4,
+            ninit = 2,
+            initialize = true,
+            postoptimize = false,
+            last = 10,
+            fit_prior = fit_prior,
         )
         r = optimize(m, alg, [1.234, 2.345], options = options)
-        @test abs(r.minimum - sqrt(8/27)) < 1e-3
-        @test norm(r.minimizer - [1/3, 8/27]) < 1e-3
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
 end
 
@@ -144,13 +179,20 @@ end
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0), maxiter = 40, ctol = 1e-4,
-            ninit = 2, initialize = true, postoptimize = false, every = 5, skip = 2,
-            last = 10, fit_prior = fit_prior,
+            sub_options = IpoptOptions(print_level = 0),
+            maxiter = 40,
+            ctol = 1e-4,
+            ninit = 2,
+            initialize = true,
+            postoptimize = false,
+            every = 5,
+            skip = 2,
+            last = 10,
+            fit_prior = fit_prior,
         )
         r = optimize(m, alg, [1.234, 2.345], options = options)
-        @test abs(r.minimum - sqrt(8/27)) < 1e-3
-        @test norm(r.minimizer - [1/3, 8/27]) < 1e-3
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
 end
 
@@ -161,17 +203,21 @@ end
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, x -> g(x, 2, 0))
         add_ineq_constraint!(m, x -> g(x, -1, 1))
-        add_eq_constraint!(m, x -> sum(x) - 1/3 - 8/27, flags = [:expensive])
+        add_eq_constraint!(m, x -> sum(x) - 1 / 3 - 8 / 27, flags = [:expensive])
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0), maxiter = 30, ctol = 1e-4,
-            ninit = 2, initialize = true, postoptimize = false, last = 10, fit_prior = fit_prior,
+            sub_options = IpoptOptions(print_level = 0),
+            maxiter = 30,
+            ctol = 1e-4,
+            ninit = 2,
+            initialize = true,
+            postoptimize = false,
+            last = 10,
+            fit_prior = fit_prior,
         )
-        r = optimize(
-            m, alg, [1.234, 2.345], options = options,
-        )
-        @test abs(r.minimum - sqrt(8/27)) < 1e-3
-        @test norm(r.minimizer - [1/3, 8/27]) < 1e-3
+        r = optimize(m, alg, [1.234, 2.345], options = options)
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
 end
 
@@ -183,15 +229,20 @@ end
         add_ineq_constraint!(m, x -> [g(x, 2, 0), g(x, -1, 1)], flags = [:expensive])
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0), maxiter = 20, ctol = 1e-4,
-            ninit = 2, initialize = true, postoptimize = false, skip = 2, every = 2,
-            last = 10, fit_prior = fit_prior,
+            sub_options = IpoptOptions(print_level = 0),
+            maxiter = 20,
+            ctol = 1e-4,
+            ninit = 2,
+            initialize = true,
+            postoptimize = false,
+            skip = 2,
+            every = 2,
+            last = 10,
+            fit_prior = fit_prior,
         )
-        r = optimize(
-            m, alg, [1.234, 2.345], options = options,
-        )
-        @test abs(r.minimum - sqrt(8/27)) < 1e-3
-        @test norm(r.minimizer - [1/3, 8/27]) < 1e-3
+        r = optimize(m, alg, [1.234, 2.345], options = options)
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
 end
 
@@ -203,13 +254,18 @@ end
         add_ineq_constraint!(m, x -> [g(x, 2, 0), g(x, -1, 1)], flags = [:expensive])
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(), maxiter = 50, ctol = 1e-3,
-            ninit = 2, initialize = true, postoptimize = false, last = 10,
+            sub_options = IpoptOptions(),
+            maxiter = 50,
+            ctol = 1e-3,
+            ninit = 2,
+            initialize = true,
+            postoptimize = false,
+            last = 10,
             fit_prior = fit_prior,
         )
         r = optimize(m, alg, [1.234, 2.345], options = options)
-        @test abs(r.minimum - sqrt(8/27)) < 1e-3
-        @test norm(r.minimizer - [1/3, 8/27]) < 1e-3
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
 end
 
@@ -219,16 +275,23 @@ end
         set_objective!(m, f, flags = [:expensive])
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, x -> [g(x, 2, 0), g(x, -1, 1)], flags = [:expensive])
-        add_eq_constraint!(m, x -> sum(x) - 1/3 - 8/27, flags = [:expensive])
+        add_eq_constraint!(m, x -> sum(x) - 1 / 3 - 8 / 27, flags = [:expensive])
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0), maxiter = 100, ctol = 1e-4,
-            ninit = 2, initialize = true, postoptimize = false, last = 30, skip = 2,
-            every = 2, fit_prior = fit_prior,
+            sub_options = IpoptOptions(print_level = 0),
+            maxiter = 100,
+            ctol = 1e-4,
+            ninit = 2,
+            initialize = true,
+            postoptimize = false,
+            last = 30,
+            skip = 2,
+            every = 2,
+            fit_prior = fit_prior,
         )
         r = optimize(m, alg, [1.234, 2.345], options = options)
-        @test abs(r.minimum - sqrt(8/27)) < 1e-3
-        @test norm(r.minimizer - [1/3, 8/27]) < 1e-3
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
 end
 
@@ -241,16 +304,19 @@ end
         m = Model()
         set_objective!(m, x -> s1(x).lo, flags = [:expensive])
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
-        add_ineq_constraint!(
-            m, x -> getproperty.(s2(x), :lo), flags = [:expensive],
-        )
+        add_ineq_constraint!(m, x -> getproperty.(s2(x), :lo), flags = [:expensive])
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0), maxiter = 50, ctol = 1e-4,
-            ninit = 2, initialize = true, postoptimize = false, fit_prior = fit_prior,
+            sub_options = IpoptOptions(print_level = 0),
+            maxiter = 50,
+            ctol = 1e-4,
+            ninit = 2,
+            initialize = true,
+            postoptimize = false,
+            fit_prior = fit_prior,
         )
         r = optimize(m, alg, [1.234, 2.345], options = options, surrogates = [s1, s2])
-        @test abs(r.minimum - sqrt(8/27)) < 1e-3
-        @test norm(r.minimizer - [1/3, 8/27]) < 1e-3
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
 end
