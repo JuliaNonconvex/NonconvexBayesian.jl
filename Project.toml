@@ -1,7 +1,7 @@
 name = "NonconvexBayesian"
 uuid = "fb352abc-de7b-48de-9ebd-665b54b5d9b3"
 authors = ["Mohamed Tarek <mohdibntarek@gmail.com> and contributors"]
-version = "0.2.0"
+version = "0.1.6"
 
 [deps]
 AbstractGPs = "99985d1d-32ba-4be9-9821-2ec096f28918"
