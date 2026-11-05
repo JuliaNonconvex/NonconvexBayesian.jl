@@ -1,5 +1,12 @@
 using AbstractGPs, IntervalArithmetic
 
+# The posterior cache: `posterior` holds the per-output PosteriorGPs (or
+# `nothing` before the first interval-mode evaluation) and `dirty` records
+# whether the data or the GP changed since the cache was built. The field type
+# is names-only so concrete per-output posterior types are accepted, and
+# name-based getproperty dispatch stays type-stable.
+const PosteriorCache = NamedTuple{(:posterior, :dirty)}
+
 mutable struct ZeroOrderGPSurrogate <: Function
     f::Function
     gps::Vector{<:GP}
@@ -15,7 +22,7 @@ mutable struct ZeroOrderGPSurrogate <: Function
     fit_prior::Bool
     fit_noise::Bool
     counter::Int
-    cache::Any
+    cache::PosteriorCache
 end
 function ZeroOrderGPSurrogate(
     f,

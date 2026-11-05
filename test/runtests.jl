@@ -17,6 +17,22 @@ g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
     Zygote.jacobian(lsf2, x)
 end
 
+@testset "Surrogate cache and non-finite observations" begin
+    # The GP posterior must be cached across interval-mode evaluations: it is
+    # only rebuilt when the data or the GP changes.
+    s = NonconvexBayesian.surrogate(x -> x[1]^2 + x[2]^2, [1.234, 2.345])
+    s([1.0, 1.0])
+    post = s.cache.posterior
+    s([1.0, 1.0])
+    @test s.cache.posterior === post
+
+    # Non-finite observations are skipped instead of poisoning the GP.
+    s2 = NonconvexBayesian.ZeroOrderGPSurrogate(x -> 1 / (x[1] - 1.234), [2.0, 2.0]; mode = :exact)
+    n = length(s2.X)
+    @test_logs (:warn, r"non-finite") s2([1.234, 1.0])  # evaluates to Inf
+    @test length(s2.X) == n
+end
+
 @testset "Cheap objective and constraints" begin
     @testset "Fit prior: $fit_prior" for fit_prior in (true, false)
         m = Model()
