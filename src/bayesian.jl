@@ -15,6 +15,7 @@ mutable struct ZeroOrderGPSurrogate <: Function
     fit_prior::Bool
     fit_noise::Bool
     counter::Int
+    cache::Any
 end
 function ZeroOrderGPSurrogate(
     f,
@@ -49,6 +50,7 @@ function ZeroOrderGPSurrogate(
         fit_prior,
         fit_noise,
         0,
+        (posterior = nothing, dirty = true),
     )
 end
 
@@ -140,6 +142,7 @@ function fit_mle!(s, gps, X, y, noise, last, fit_noise)
     fit_noise ? x[end] : noise
     s.gps = gps
     s.noise = noise
+    set_cache!(s, (posterior = s.cache.posterior, dirty = true))
     return s
 end
 function ChainRulesCore.rrule(::typeof(fit_mle!), s, gp, X, y, noise, last, fit_noise)
@@ -152,27 +155,43 @@ end
 function (s::ZeroOrderGPSurrogate)(x)
     if s.mode == :exact
         y = s.f(x)
-        s.X = vcat(s.X, [x])
-        s.y = vcat(s.y, [y])
-        s.counter += 1
-        if s.fit_prior && s.counter > s.skip * s.every && (s.counter % s.every) == 0
-            fit_mle!(s, s.gps, s.X, s.y, s.noise, s.last, s.fit_noise)
+        if y isa Real ? isfinite(y) : all(isfinite, y)
+            s.X = vcat(s.X, [x])
+            s.y = vcat(s.y, [y])
+            set_cache!(s, (posterior = s.cache.posterior, dirty = true))
+            s.counter += 1
+            if s.fit_prior && s.counter > s.skip * s.every && (s.counter % s.every) == 0
+                fit_mle!(s, s.gps, s.X, s.y, s.noise, s.last, s.fit_noise)
+            end
+        else
+            @warn "Skipping non-finite surrogate observation." maxlog = 10
         end
         return Interval.(y, y)
     else
+        if s.cache.dirty || s.cache.posterior === nothing
+            posterior_cache = map(1:s.N) do i
+                ys = eltype(s.y) <: Real ? s.y : getindex.(s.y, i)
+                posterior(s.gps[i](s.X, s.noise), ys)
+            end
+            set_cache!(s, (posterior = posterior_cache, dirty = false))
+        end
         if eltype(s.y) <: Real
-            return _call_gp(s.gps[1], x, s.X, s.y, s.noise, s.std_multiple)
+            return _call_gp(s.cache.posterior[1], x, s.std_multiple)
         else
-            return map(
-                i -> _call_gp(s.gps[i], x, s.X, getindex.(s.y, i), s.noise, s.std_multiple),
-                1:s.N,
-            )
+            return map(i -> _call_gp(s.cache.posterior[i], x, s.std_multiple), 1:s.N)
         end
     end
 end
 
-function _call_gp(gp, x, X, y, noise, std_multiple)
-    _m, _v = mean_and_var(posterior(gp(X, noise), y), [x])
+# Memoization only: the posterior cache carries no gradient information.
+function set_cache!(s::ZeroOrderGPSurrogate, cache)
+    s.cache = cache
+    return s
+end
+ChainRulesCore.@non_differentiable set_cache!(s::ZeroOrderGPSurrogate, cache)
+
+function _call_gp(pg, x, std_multiple)
+    _m, _v = mean_and_var(pg, [x])
     m, v = _m[1], _v[1]
     r = std_multiple * sqrt(v)
     return Interval(m - r, m + r)
@@ -394,6 +413,7 @@ function optimize!(workspace::BayesOptWorkspace)
     x = copy(r.minimizer)
     prevm = minval
     iter = 1
+    converged = false
     while iter < maxiter
         iter += 1
         ob, ineq, eq = update_surrogates!(smodel, surrogates, x)
@@ -409,20 +429,20 @@ function optimize!(workspace::BayesOptWorkspace)
         m = ob
         x = copy(r.minimizer)
     end
-    ob, ineq, eq = update_surrogates!(smodel, surrogates, x)
-    feasible = all(ineq .<= ctol) && all(abs.(eq) .<= ctol)
-    if feasible && ob <= minval
-        minval = ob
-        minimizer = r.minimizer
+    if !converged
+        ob, ineq, eq = update_surrogates!(smodel, surrogates, x)
+        feasible = all(ineq .<= ctol) && all(abs.(eq) .<= ctol)
+        if feasible && ob <= minval
+            minval = ob
+            minimizer = copy(x)
+        end
     end
     if postoptimize
         foreach(surrogates) do s
             s.mode = :exact
         end
-    end
-    sub_workspace.x0 .= minimizer
-    r = optimize!(sub_workspace)
-    if postoptimize
+        sub_workspace.x0 .= minimizer
+        r = optimize!(sub_workspace)
         if r.minimum <= minval
             minval = r.minimum
             minimizer = copy(r.minimizer)
