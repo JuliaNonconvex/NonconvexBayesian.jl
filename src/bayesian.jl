@@ -170,10 +170,11 @@ function (s::ZeroOrderGPSurrogate)(x)
             if s.fit_prior && s.counter > s.skip * s.every && (s.counter % s.every) == 0
                 fit_mle!(s, s.gps, s.X, s.y, s.noise, s.last, s.fit_noise)
             end
+            return interval.(y, y)
         else
             @warn "Skipping non-finite surrogate observation." maxlog = 10
+            return y isa Real ? nai() : map(_ -> nai(), y)
         end
-        return interval.(y, y)
     else
         if s.cache.dirty || s.cache.posterior === nothing
             posterior_cache = map(1:s.N) do i
