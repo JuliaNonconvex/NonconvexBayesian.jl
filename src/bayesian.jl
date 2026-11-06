@@ -1,4 +1,4 @@
-using AbstractGPs, IntervalArithmetic
+using AbstractGPs, ForwardDiff, IntervalArithmetic
 
 # The posterior cache: `posterior` holds the per-output PosteriorGPs (or
 # `nothing` before the first interval-mode evaluation) and `dirty` records
@@ -212,8 +212,12 @@ function surrogate(f, x; kwargs...)
     return s
 end
 
-get_lo(x) = inf(x)
+get_lo(x::Interval) = inf(x)
+# Zygote's broadcast pullback seeds `ForwardDiff.Dual` values; unwrap them
+# (mirroring how field access on a Dual forwards to its value).
+get_lo(x::ForwardDiff.Dual) = get_lo(ForwardDiff.value(x))
 get_lo(x::AbstractVector) = map(get_lo, x)
+get_lo(x::Real) = x
 _lower_f(s) = get_lo ∘ s
 _equality_f(s) = x -> begin
     t = s(x)
