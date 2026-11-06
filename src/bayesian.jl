@@ -211,12 +211,12 @@ function surrogate(f, x; kwargs...)
     return s
 end
 
-get_lo(x) = x.lo
+get_lo(x) = inf(x)
 get_lo(x::AbstractVector) = map(get_lo, x)
 _lower_f(s) = get_lo ∘ s
 _equality_f(s) = x -> begin
     t = s(x)
-    return [getproperty.(t, :lo); .-getproperty(t, :hi)]
+    return [inf.(t); .-sup.(t)]
 end
 
 function surrogate_model(vecmodel::VecModel; kwargs...)
