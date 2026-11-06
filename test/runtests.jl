@@ -318,9 +318,9 @@ end
         s2 = NonconvexBayesian.surrogate(x -> [g(x, 2, 0), g(x, -1, 1)], x0)
 
         m = Model()
-        set_objective!(m, x -> s1(x).lo, flags = [:expensive])
+        set_objective!(m, x -> NonconvexBayesian.get_lo(s1(x)), flags = [:expensive])
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
-        add_ineq_constraint!(m, x -> getproperty.(s2(x), :lo), flags = [:expensive])
+        add_ineq_constraint!(m, x -> NonconvexBayesian.get_lo.(s2(x)), flags = [:expensive])
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
             sub_options = IpoptOptions(print_level = 0),
