@@ -173,7 +173,7 @@ function (s::ZeroOrderGPSurrogate)(x)
         else
             @warn "Skipping non-finite surrogate observation." maxlog = 10
         end
-        return Interval.(y, y)
+        return interval.(y, y)
     else
         if s.cache.dirty || s.cache.posterior === nothing
             posterior_cache = map(1:s.N) do i
@@ -201,7 +201,7 @@ function _call_gp(pg, x, std_multiple)
     _m, _v = mean_and_var(pg, [x])
     m, v = _m[1], _v[1]
     r = std_multiple * sqrt(v)
-    return Interval(m - r, m + r)
+    return interval(m - r, m + r)
 end
 
 function surrogate(f, x; kwargs...)
