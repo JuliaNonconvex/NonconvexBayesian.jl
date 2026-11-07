@@ -198,6 +198,17 @@ function set_cache!(s::ZeroOrderGPSurrogate, cache)
 end
 ChainRulesCore.@non_differentiable set_cache!(s::ZeroOrderGPSurrogate, cache)
 
+# The surrogate output is a closed-form GP posterior evaluated through
+# IntervalArithmetic; its derivative with respect to the query point is not
+# used by the Bayesian optimization loop. Give Zygote a zero-gradient rule so
+# that AD never has to decompose the interval construction (which is opaque to
+# Zygote under IntervalArithmetic 1.0).
+function ChainRulesCore.rrule(s::ZeroOrderGPSurrogate, x::AbstractVector)
+    y = s(x)
+    surrogate_pullback(Δ) = (ChainRulesCore.NoTangent(), zero(x))
+    return y, surrogate_pullback
+end
+
 function _call_gp(pg, x, std_multiple)
     _m, _v = mean_and_var(pg, [x])
     m, v = _m[1], _v[1]
@@ -213,9 +224,10 @@ function surrogate(f, x; kwargs...)
 end
 
 get_lo(x::Interval) = inf(x)
-# Zygote's broadcast pullback seeds `ForwardDiff.Dual` values; unwrap them
-# (mirroring how field access on a Dual forwards to its value).
-get_lo(x::ForwardDiff.Dual) = get_lo(ForwardDiff.value(x))
+# Zygote's broadcast pullback seeds `ForwardDiff.Dual` values; keep the Dual
+# structure so the broadcast machinery returns a (zero) gradient vector instead
+# of failing the pullback with `nothing`.
+get_lo(x::ForwardDiff.Dual) = ForwardDiff.Dual(get_lo(ForwardDiff.value(x)), ForwardDiff.partials(x))
 get_lo(x::AbstractVector) = map(get_lo, x)
 get_lo(x::Real) = x
 _lower_f(s) = get_lo ∘ s
