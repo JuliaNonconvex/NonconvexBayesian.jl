@@ -1,4 +1,4 @@
-using AbstractGPs, ForwardDiff, IntervalArithmetic
+using AbstractGPs, ForwardDiff, IntervalArithmetic, LinearAlgebra, Statistics
 
 # The posterior cache: `posterior` holds the per-output PosteriorGPs (or
 # `nothing` before the first interval-mode evaluation) and `dirty` records
@@ -198,14 +198,66 @@ function set_cache!(s::ZeroOrderGPSurrogate, cache)
 end
 ChainRulesCore.@non_differentiable set_cache!(s::ZeroOrderGPSurrogate, cache)
 
-# The surrogate output is a closed-form GP posterior evaluated through
-# IntervalArithmetic; its derivative with respect to the query point is not
-# used by the Bayesian optimization loop. Give Zygote a zero-gradient rule so
-# that AD never has to decompose the interval construction (which is opaque to
-# Zygote under IntervalArithmetic 1.0).
+# IntervalArithmetic 1.0's interval constructor is opaque to Zygote, so give
+# the surrogate callable an explicit rule. In exact mode the surrogate returns
+# the raw function value wrapped as a degenerate interval, so the gradient is
+# that of the wrapped function. In interval mode it returns the GP posterior
+# mean ± std_multiple * std, so the gradient is chained through the scalar
+# posterior mean and variance (which ForwardDiff can differentiate).
+function _interval_perturbation(Δ)
+    Δ = ChainRulesCore.unthunk(Δ)
+    Δ isa Interval && return inf(Δ), sup(Δ)
+    Δ isa Real && return Δ, zero(Δ)
+    Δ isa ChainRulesCore.AbstractZero && return 0.0, 0.0
+    # structural tangent over the Interval fields
+    b = getproperty(Δ, :bareinterval)
+    b isa ChainRulesCore.AbstractZero && return 0.0, 0.0
+    lo = getproperty(b, :lo)
+    hi = getproperty(b, :hi)
+    lo = lo isa ChainRulesCore.AbstractZero ? 0.0 : lo
+    hi = hi isa ChainRulesCore.AbstractZero ? 0.0 : hi
+    return lo, hi
+end
+
+function _perturbation_sum(Δ)
+    lo, hi = _interval_perturbation(Δ)
+    return lo + hi
+end
+
+function _call_gp_grad(pg, x, std_multiple, Δ)
+    Δlo, Δhi = _interval_perturbation(Δ)
+    gmean = ForwardDiff.gradient(x -> mean(pg, [x])[1], x)
+    gvar = ForwardDiff.gradient(x -> var(pg, [x])[1], x)
+    _m, _v = mean_and_var(pg, [x])
+    v = _v[1]
+    sv = sqrt(v)
+    gr = sv == 0 ? zero(gvar) : std_multiple .* gvar ./ (2sv)
+    return (Δlo + Δhi) .* gmean .+ (Δhi - Δlo) .* gr
+end
+
 function ChainRulesCore.rrule(s::ZeroOrderGPSurrogate, x::AbstractVector)
     y = s(x)
-    surrogate_pullback(Δ) = (ChainRulesCore.NoTangent(), zero(x))
+    function surrogate_pullback(Δ)
+        if s.mode == :exact
+            yv = s.f(x)
+            if yv isa Real
+                gy = ForwardDiff.gradient(s.f, x)
+                return ChainRulesCore.NoTangent(), _perturbation_sum(Δ) .* gy
+            else
+                J = ForwardDiff.jacobian(s.f, x)
+                Δv = _perturbation_sum.(Δ)
+                return ChainRulesCore.NoTangent(), J' * Δv
+            end
+        else
+            Δs = Δ isa AbstractVector ? Δ : [Δ]
+            gx = zero(x)
+            for i in eachindex(Δs)
+                pg = eltype(s.y) <: Real ? s.cache.posterior[1] : s.cache.posterior[i]
+                gx .+= _call_gp_grad(pg, x, s.std_multiple, Δs[i])
+            end
+            return ChainRulesCore.NoTangent(), gx
+        end
+    end
     return y, surrogate_pullback
 end
 
@@ -224,12 +276,18 @@ function surrogate(f, x; kwargs...)
 end
 
 get_lo(x::Interval) = inf(x)
-# Zygote's broadcast pullback seeds `ForwardDiff.Dual` values; keep the Dual
-# structure so the broadcast machinery returns a (zero) gradient vector instead
-# of failing the pullback with `nothing`.
-get_lo(x::ForwardDiff.Dual) = ForwardDiff.Dual(get_lo(ForwardDiff.value(x)), ForwardDiff.partials(x))
+# Zygote's broadcast pullback seeds `ForwardDiff.Dual` values whose partials
+# are typed by the seeded value (an `Interval`); re-type them to the output
+# type so the broadcast machinery propagates scalar lower-bound perturbations.
+function get_lo(x::ForwardDiff.Dual)
+    v = get_lo(ForwardDiff.value(x))
+    p = ForwardDiff.partials(x)
+    fp = ntuple(i -> _lo_seed(p[i]), length(p))
+    return ForwardDiff.Dual(v, fp)
+end
 get_lo(x::AbstractVector) = map(get_lo, x)
 get_lo(x::Real) = x
+_lo_seed(p) = p isa Interval ? Float64(inf(p)) : Float64(p)
 _lower_f(s) = get_lo ∘ s
 _equality_f(s) = x -> begin
     t = s(x)
