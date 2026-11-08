@@ -705,6 +705,7 @@ end
     @test caps.box === true
     @test caps.sd === false           # forwarded from IpoptAlg's declaration
     @test caps.integer === false      # forwarded from IpoptAlg's declaration
+    @test caps.infinite_bounds === true  # forwarded from IpoptAlg's declaration
 
     # sd is forwarded from the sub-solver.
     caps2 = solver_capabilities(BayesOptAlg(NoSDOptimizer()))
