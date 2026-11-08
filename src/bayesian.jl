@@ -416,7 +416,10 @@ function _fit_gp_group!(
     end
     if fit_noise
         x = [x1; x2; noise]
-        lb = [fill(-Inf, length(x1)); lb2; 1e-8]
+        # 1e-6: the floor must sit above Ipopt's default bound_relax_factor
+        # (1e-8), which would otherwise relax it to zero and let the MLE
+        # drive the noise to a degenerate value.
+        lb = [fill(-Inf, length(x1)); lb2; 1e-6]
         ub = [fill(Inf, length(x1)); ub2; Inf]
     else
         x = [x1; x2]
@@ -435,15 +438,22 @@ function _fit_gp_group!(
     end
     obj(θ) = begin
         offset = 0
-        return -sum(1:length(gps)) do i
+        n = fit_noise ? θ[end] : noise
+        val = -sum(1:length(gps)) do i
             l1 = length(xs_uns_1[i][1])
             un1 = xs_uns_1[i][2]
             l2 = length(xs_lbs_ubs_uns_2[i][1])
             un2 = xs_lbs_ubs_uns_2[i][4]
             _gp = GP(un1(θ[offset+1:offset+l1]), un2(θ[offset+l1+1:offset+l1+l2]))
             offset += l1 + l2
-            return logpdf(_gp(_X, fit_noise ? θ[end] : noise), _ys[i])
+            # Relative jitter keeps the covariance positive definite even when
+            # the optimizer explores extreme kernel amplitudes, where the
+            # finite-precision Cholesky would otherwise fail.
+            dmax = maximum(xk -> _gp.kernel(xk, xk), _X)
+            _n = n + sqrt(eps()) * max(dmax, 1.0)
+            return logpdf(_gp(_X, _n), _ys[i])
         end
+        return isfinite(val) ? val : 1e10
     end
     m = Model(obj)
     addvar!(m, lb, ub)

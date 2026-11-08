@@ -750,3 +750,156 @@ end
     # Invalid fit_bounds lengths are rejected.
     @test_throws ArgumentError NonconvexBayesian._expand_to([1.0, 2.0], 3)
 end
+
+@testset "EI and PI gradients" begin
+    # The EI/PI rrule chains the acquisition gradient through the degenerate
+    # interval, so it must match finite differences of the surrogate value
+    # (unlike the first-order surrogate, whose gradient is a prediction).
+    # Widely-spread training data keeps the posterior (and the acquisitions)
+    # far from the underflow regime.
+    fq(x) = x[1]^2 + x[2]^2
+    x0 = [0.0, 0.0]
+    x = [0.2, 0.0]  # near the best observed point: substantial EI/PI
+    h = 1e-6
+    for acq in (EI(), PI(0.1))
+        s = NonconvexBayesian.ZeroOrderGPSurrogate(fq, x0; acquisition = acq)
+        s.mode = :exact
+        s([1.0, 1.0]); s([2.0, 0.0]); s([0.0, 2.0])
+        s.mode = :interval
+        f1 = z -> NonconvexBayesian.get_lo(s(z))
+        @test abs(f1(x)) > 1e-5  # the acquisition is not degenerate here
+        gfd = [(f1(x + h * [1.0, 0.0]) - f1(x - h * [1.0, 0.0])) / (2h),
+            (f1(x + h * [0.0, 1.0]) - f1(x - h * [0.0, 1.0])) / (2h)]
+        gad = Zygote.gradient(f1, x)[1]
+        @test all(isfinite, gad)
+        @test gad ≈ gfd rtol = 1e-4 atol = 1e-8
+    end
+end
+
+@testset "First-order surrogate, multi-output" begin
+    fq2(x) = [x[1]^2 + 3x[2]^2, 2x[1] - x[2]]
+    x0 = [0.3, 0.4]
+    s = NonconvexBayesian.first_order_surrogate(fq2, x0)  # ForwardDiff gradients
+    s.mode = :exact
+    s([1.5, 2.0]); s([-0.5, 1.0])
+    s.mode = :interval
+    s([0.5, 0.6])  # build the posterior cache
+
+    @test s.N == 2
+    @test size(s.∇y[1], 2) == 2
+    @test size(s.∇y[2], 2) == 2
+    @test size(s.∇y[1], 1) >= 3
+    @test length(s.∇gps) == 2 && length(s.∇gps[1]) == 2
+
+    # The gradient GPs interpolate each output's observed gradients.
+    pg1 = s.cache.posterior[1]
+    pg2 = s.cache.posterior[2]
+    @test NonconvexBayesian._mean_gradient(s, pg1, 1, [1.5, 2.0]) ≈ [3.0, 12.0] rtol = 1e-3
+    @test NonconvexBayesian._mean_gradient(s, pg2, 2, [1.5, 2.0]) ≈ [2.0, -1.0] rtol = 1e-3
+
+    # The multi-output rrule runs through Zygote and stays finite.
+    fsum = z -> sum(NonconvexBayesian.get_lo.(s(z)))
+    gad = Zygote.gradient(fsum, [0.5, 0.6])[1]
+    @test all(isfinite, gad)
+end
+
+@testset "Gradient GP hyperparameter refitting" begin
+    fq(x) = x[1]^2 + 3x[2]^2
+    ∇fq(x) = [2x[1], 6x[2]]
+    x0 = [0.3, 0.4]
+    # every = 1, skip = 0 forces a refit (value + gradient GPs) per evaluation.
+    s = NonconvexBayesian.first_order_surrogate(fq, x0; grad_source = ∇fq, every = 1, skip = 0)
+    s.mode = :exact
+    s([1.5, 2.0])
+    s([-0.5, 1.0])
+    @test s.counter == 3
+    s.mode = :interval
+    s([0.5, 0.6])
+    # After the refits, the gradient GPs still interpolate at training points.
+    gtr = NonconvexBayesian._mean_gradient(s, s.cache.posterior[1], 1, [1.5, 2.0])
+    @test gtr ≈ ∇fq([1.5, 2.0]) rtol = 1e-3
+end
+
+@testset "fit_noise" begin
+    fq(x) = x[1]^2 + x[2]^2
+    s = NonconvexBayesian.surrogate(fq, [1.0, 1.0]; fit_noise = true, every = 1, skip = 0)
+    s.mode = :exact
+    s([1.1, 1.1])
+    # The MLE included the noise, which stays within its [1e-6, Inf] bounds
+    # (the floor is above Ipopt's default bound relaxation).
+    @test s.noise >= 1e-7
+    @test isfinite(s.noise)
+end
+
+@testset "Deduplication helper" begin
+    fq(x) = x[1]^2 + x[2]^2
+    s = NonconvexBayesian.surrogate(fq, [1.0, 1.0])
+    s.mode = :exact
+    s([1.1, 1.1])
+    s.mode = :interval
+    @test NonconvexBayesian._mindist([s], [1.1, 1.1]) < 1e-8
+    @test NonconvexBayesian._mindist([s], [5.0, 5.0]) > 1.0
+end
+
+@testset "Integer capability error" begin
+    m = Model()
+    set_objective!(m, f)
+    addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+    setinteger!(m, 1, true)
+    err = try
+        optimize(
+            m,
+            BayesOptAlg(IpoptAlg()),
+            [1.234, 2.345],
+            options = BayesOptOptions(sub_options = nothing),
+        )
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("integer", sprint(showerror, err))
+end
+
+@testset "First-order BO with an expensive constraint" begin
+    m = Model()
+    set_objective!(m, f, flags = [:expensive])
+    addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+    add_ineq_constraint!(m, x -> g(x, 2, 0), flags = [:expensive])
+    add_ineq_constraint!(m, x -> g(x, -1, 1))
+    alg = BayesOptAlg(IpoptAlg())
+    options = BayesOptOptions(
+        sub_options = IpoptOptions(print_level = 0),
+        maxiter = 40,
+        ctol = 1e-4,
+        ninit = 8,
+        postoptimize = true,  # polish the incumbent on the exact model
+        fit_prior = false,
+        first_order = true,
+        grad_source = :forwarddiff,
+    )
+    r = optimize(m, alg, [1.234, 2.345], options = options)
+    # Smoke test for the gradient-enhanced constraint path (the inexact
+    # gradients can land the BO loop slightly off, and postoptimize polishes).
+    @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
+    @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
+end
+
+@testset "Hyperparameter-optimizer fallback (no NonconvexIpopt)" begin
+    # In a subprocess that never loads NonconvexIpopt, the extension is not
+    # triggered and the default hyperparameter optimizer errors with guidance.
+    script = """
+    using NonconvexBayesian
+    s = NonconvexBayesian.ZeroOrderGPSurrogate(x -> x[1]^2, [1.0]; every = 1, skip = 0)
+    s.mode = :exact
+    try
+        s([2.0])
+        println("NOERROR")
+    catch e
+        println(e isa ErrorException ? "OK" : "WRONGERR")
+    end
+    """
+    out = read(`$(Base.julia_cmd()) --project=$(dirname(Base.active_project())) -e $script`, String)
+    @test occursin("OK", out)
+    @test !occursin("NOERROR", out)
+end

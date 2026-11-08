@@ -45,6 +45,10 @@
   `maxiter` iterations).
 - Fixed the multi-output hyperparameter-MLE path (it indexed observations
   instead of outputs).
+- Made the hyperparameter MLE robust: a relative jitter keeps the covariance
+  positive definite when the optimizer explores extreme kernel amplitudes,
+  and the fitted-noise floor was raised to `1e-6` (above Ipopt's default
+  bound relaxation, which silently erased the previous `1e-8` floor).
 
 ## 0.1.7
 
