@@ -724,6 +724,12 @@ function ChainRulesCore.rrule(s::AbstractGPSurrogate, x::AbstractVector)
     return y, surrogate_pullback
 end
 
+"""
+    surrogate(f, x; kwargs...)
+
+Constructs a [`ZeroOrderGPSurrogate`](@ref) for `f` initialized at `x`,
+evaluates `f(x)` once and switches it to interval mode.
+"""
 function surrogate(f, x; kwargs...)
     s = ZeroOrderGPSurrogate(f, x; mode = :exact, kwargs...)
     s(x)
@@ -731,6 +737,12 @@ function surrogate(f, x; kwargs...)
     return s
 end
 
+"""
+    first_order_surrogate(f, x; kwargs...)
+
+Constructs a [`FirstOrderGPSurrogate`](@ref) for `f` initialized at `x`,
+evaluates `f(x)` (and its gradient) once and switches it to interval mode.
+"""
 function first_order_surrogate(f, x; kwargs...)
     s = FirstOrderGPSurrogate(f, x; mode = :exact, kwargs...)
     s(x)
@@ -738,7 +750,51 @@ function first_order_surrogate(f, x; kwargs...)
     return s
 end
 
+"""
+    get_lo(x)
+
+The lower bound of an interval, mapped elementwise over arrays and vectors;
+the identity for reals. Used to extract the acquisition lower bound from a
+surrogate's interval output.
+"""
 get_lo(x::Interval) = inf(x)
+
+# IntervalArithmetic defines no ChainRules rules, so Zygote's fallback
+# differentiates `inf` through copysign/flipsign, which throws on zero
+# cotangents (e.g. under NonconvexCore's row-by-row Jacobian assembly).
+# Explicit rules return structural tangents (lo seeded, hi zero) so the
+# surrogate gradient path never descends into those internals.
+function ChainRulesCore.rrule(::typeof(inf), x::Interval)
+    function inf_pullback(Δ)
+        Δ = ChainRulesCore.unthunk(Δ)
+        Δ isa ChainRulesCore.AbstractZero &&
+            return (ChainRulesCore.NoTangent(), ChainRulesCore.ZeroTangent())
+        Δv = Δ isa Real ? Δ : 0.0
+        b = bareinterval(x)
+        return (
+            ChainRulesCore.NoTangent(),
+            ChainRulesCore.Tangent{typeof(x)}(
+                bareinterval = ChainRulesCore.Tangent{typeof(b)}(lo = Δv, hi = zero(Δv)),
+                decoration = ChainRulesCore.NoTangent(),
+                isguaranteed = ChainRulesCore.NoTangent(),
+            ),
+        )
+    end
+    return inf(x), inf_pullback
+end
+function ChainRulesCore.rrule(::typeof(inf), x::IntervalArithmetic.BareInterval)
+    function inf_pullback(Δ)
+        Δ = ChainRulesCore.unthunk(Δ)
+        Δ isa ChainRulesCore.AbstractZero &&
+            return (ChainRulesCore.NoTangent(), ChainRulesCore.ZeroTangent())
+        Δv = Δ isa Real ? Δ : 0.0
+        return (
+            ChainRulesCore.NoTangent(),
+            ChainRulesCore.Tangent{typeof(x)}(lo = Δv, hi = zero(Δv)),
+        )
+    end
+    return inf(x), inf_pullback
+end
 # Zygote's broadcast pullback seeds `ForwardDiff.Dual` values whose partials
 # are typed by the seeded value (an `Interval`); re-type them to the output
 # type so the broadcast machinery propagates scalar lower-bound perturbations.
@@ -874,6 +930,14 @@ function surrogate_model(
     Tuple(surrogates)
 end
 
+"""
+    update_surrogates!(model, surrogates, x)
+
+Evaluates `model` at `x` with the surrogates in exact mode (recording the
+true observations, including gradient observations for first-order
+surrogates), then switches them back to interval mode. Returns the objective
+value, the inequality and the equality constraint values at `x`.
+"""
 function update_surrogates!(model, surrogates, x)
     foreach(surrogates) do s
         s.mode = :exact
@@ -905,8 +969,50 @@ struct BayesOptOptions{S,N<:NamedTuple}
     acq_multistart::Int
     deduplicate::Bool
     xtol_dup::Float64
+    trust_region::Bool
+    tr_length_init::Float64
+    tr_min_factor::Float64
+    tr_success_max::Int
+    tr_fail_max::Union{Int,Nothing}
     nt::N
 end
+
+"""
+    BayesOptOptions(sub_options; kwargs...)
+
+Options of the [`BayesOptAlg`](@ref) Bayesian-optimization loop. `sub_options`
+(the options of the sub-optimizer) is required. The keyword arguments are:
+
+- `maxiter = 100`: the maximum number of BO iterations (each iteration
+  evaluates the expensive functions once).
+- `initialize = true`, `ninit = 10`, `init_strategy = :sobol_direct`:
+  initialization control; `:sobol_direct` evaluates the true functions at
+  the Sobol points, `:acquisition` solves the surrogate from each point.
+- `ctol = 1e-4`: feasibility tolerance; `ftol = 1e-4`: relative objective
+  tolerance for convergence.
+- `postoptimize = true`: polish the incumbent on the exact model after the
+  loop.
+- `verbose = false`, `keep_all = false`: per-iteration logging and query
+  trajectory recording.
+- `acq_multistart = 1`, `deduplicate = true`, `xtol_dup = 1e-8`:
+  acquisition multistart and duplicate-point filtering.
+- `trust_region = false`, `tr_length_init = 0.8`, `tr_min_factor = 1/32`,
+  `tr_success_max = 3`, `tr_fail_max = nothing`: TuRBO-style local
+  trust-region restarts (requires finite variable bounds).
+- `acquisition = nothing`: the objective acquisition (default
+  `LCB(std_multiple)`); constraint surrogates always use LCB.
+- `std_multiple = 3.0`: the `η` of the default LCB acquisition.
+- `first_order = false`, `grad_source = :forwarddiff`, `fit_grads = true`:
+  first-order (gradient-enhanced) surrogates and gradient-observation
+  collection.
+- `kernel = SqExponentialKernel()`, `noise = 1e-8`: the GP kernel and the
+  observation noise.
+- `fit_prior = true`, `fit_noise = false`, `every = 2`, `skip = 2`,
+  `last = :all`: hyperparameter refit control.
+- `fit_max_iter = 20`, `fit_bounds = nothing`, `fit_optimizer = nothing`:
+  the hyperparameter optimizer (defaults to Ipopt via the
+  `NonconvexBayesianIpoptExt` extension).
+"""
 function BayesOptOptions(;
     sub_options,
     initialize = true,
@@ -925,6 +1031,11 @@ function BayesOptOptions(;
     acq_multistart = 1,
     deduplicate = true,
     xtol_dup = 1e-8,
+    trust_region = false,
+    tr_length_init = 0.8,
+    tr_min_factor = 1 / 32,
+    tr_success_max = 3,
+    tr_fail_max = nothing,
     fit_prior = true,
     fit_noise = false,
     every = 2,
@@ -941,6 +1052,9 @@ function BayesOptOptions(;
         error("init_strategy must be :sobol_direct or :acquisition, got $(init_strategy).")
     acq_multistart >= 1 || error("acq_multistart must be at least 1.")
     maxiter >= 1 || error("maxiter must be at least 1.")
+    0 < tr_length_init <= 1 || error("tr_length_init must be in (0, 1].")
+    0 < tr_min_factor < 1 || error("tr_min_factor must be in (0, 1).")
+    tr_success_max >= 1 || error("tr_success_max must be at least 1.")
     return BayesOptOptions(
         sub_options,
         maxiter,
@@ -955,6 +1069,11 @@ function BayesOptOptions(;
         acq_multistart,
         deduplicate,
         xtol_dup,
+        trust_region,
+        tr_length_init,
+        tr_min_factor,
+        tr_success_max,
+        tr_fail_max,
         (
             std_multiple = std_multiple,
             kernel = kernel,
@@ -975,6 +1094,14 @@ function BayesOptOptions(;
     )
 end
 
+"""
+    BayesOptWorkspace
+
+The workspace of the [`BayesOptAlg`](@ref) meta-algorithm: the original
+model, the surrogate sub-workspace, the surrogates, the callback and the
+query history. `NonconvexCore.reset!` rebuilds the surrogates from scratch so
+the workspace can be re-run or nested in other meta-algorithms.
+"""
 mutable struct BayesOptWorkspace{
     M<:VecModel,
     S1<:Workspace,
@@ -1000,13 +1127,15 @@ end
     BayesOptResult
 
 The result returned by [`BayesOptAlg`](@ref). In addition to the
-[`GenericResult`](@ref)-style fields (`minimizer`, `minimum`, `iter`,
+`GenericResult`-style fields (`minimizer`, `minimum`, `iter`,
 `maxiter_reached`, `tol`, `convstate`, `fcalls`), it carries the
 `sub_result` of the last surrogate solve, the trained `surrogates`, and the
 query `trajectory` when `keep_all = true`.
 
 - `fcalls` counts the expensive-function evaluations performed during this
   `optimize` call (the initial point is not counted).
+- `n_restarts` counts the TuRBO-style trust-region restarts (0 when
+  `trust_region = false`).
 """
 mutable struct BayesOptResult{O,I,M1,M2,T,C,S1,S2,H} <: AbstractResult
     optimizer::O
@@ -1018,6 +1147,7 @@ mutable struct BayesOptResult{O,I,M1,M2,T,C,S1,S2,H} <: AbstractResult
     tol::T
     convstate::C
     fcalls::Int
+    n_restarts::Int
     sub_result::S1
     surrogates::S2
     trajectory::H
@@ -1055,6 +1185,48 @@ end
 
 _fcalls(surrogates) = sum(s -> s.counter, surrogates; init = 0)
 
+# ================================================================
+# TuRBO-style local trust regions
+# ================================================================
+
+"""
+    _tr_bounds(center, L, lb, ub)
+
+The bounds of the trust-region hyperrectangle with per-dimension edge lengths
+`L`, centered at `center` and clamped to the variable bounds.
+"""
+function _tr_bounds(center, L, lb, ub)
+    return max.(center .- L ./ 2, lb), min.(center .+ L ./ 2, ub)
+end
+
+"""
+    _update_tr(L, improved, success, failure, τ_success, τ_fail, L_init, L_min)
+
+The TuRBO success/failure rule: double `L` (capped at `L_init`) after
+`τ_success` consecutive improvements, halve it after `τ_fail` consecutive
+non-improvements, and restart (reset `L` to `L_init`) when the region
+collapses below `L_min`. Returns `(L, restart, success, failure)`.
+"""
+function _update_tr(L, improved, success, failure, τ_success, τ_fail, L_init, L_min)
+    if improved
+        success += 1
+        failure = 0
+        L = min.(2 .* L, L_init)
+        return L, false, success, failure
+    else
+        failure += 1
+        success = 0
+        if failure >= τ_fail
+            L = L ./ 2
+            failure = 0
+            if all(L .< L_min)
+                return copy(L_init), true, success, failure
+            end
+        end
+        return L, false, success, failure
+    end
+end
+
 # Evaluate the true (expensive) functions at `x` through the surrogates and
 # report the objective value and feasibility.
 function _evaluate!(workspace, x; ctol)
@@ -1078,14 +1250,13 @@ _mindist(surrogates, x) = begin
     return d
 end
 
-# Solve the acquisition (the surrogate model) with `nstarts` starts: the warm
-# start plus `nstarts - 1` Sobol starts. The best candidate by surrogate
-# objective is returned; when `dedup = true` candidates within `xtol_dup` of an
-# already-evaluated point are skipped in favour of the next-best candidate.
-#
-# The candidate selection is isolated here so that future trust-region
-# strategies (e.g. TuRBO-style local trust regions with restarts) can call it
-# with tightened bounds.
+# Solve the acquisition (the surrogate model) restricted to the box
+# `[tr_lb, tr_ub]` (the trust region, or the full variable box), with
+# `nstarts` starts: the warm start plus `nstarts - 1` Sobol starts clamped
+# into the box. The best candidate by surrogate objective is returned; when
+# `dedup = true` candidates within `xtol_dup` of an already-evaluated point
+# are skipped in favour of the next-best candidate. The subproblem bounds are
+# restored before returning.
 function _solve_acquisition!(
     workspace::BayesOptWorkspace,
     warm,
@@ -1093,35 +1264,47 @@ function _solve_acquisition!(
     nstarts,
     dedup,
     xtol_dup,
+    tr_lb,
+    tr_ub,
 )
     @unpack sub_workspace, surrogates = workspace
-    sub_workspace.x0 .= warm
-    r = optimize!(sub_workspace)
-    v = _surrogate_objective(sub_workspace.model, r.minimizer)
-    candidates = [(x = collect(float.(r.minimizer)), r = r, v = v)]
-    if nstarts > 1 && sob !== nothing
-        for x1 in Iterators.take(sob, nstarts - 1)
-            sub_workspace.x0 .= x1
-            rr = optimize!(sub_workspace)
-            vv = _surrogate_objective(sub_workspace.model, rr.minimizer)
-            push!(candidates, (x = collect(float.(rr.minimizer)), r = rr, v = vv))
-        end
-    end
-    sort!(candidates, by = c -> c.v)
-    if dedup && !isempty(surrogates)
-        for c in candidates
-            if _mindist(surrogates, c.x) >= xtol_dup
-                sub_workspace.x0 .= c.x
-                return c.r
+    model = sub_workspace.model
+    orig_lb, orig_ub = getmin(model), getmax(model)
+    setmin!(model, tr_lb)
+    setmax!(model, tr_ub)
+    try
+        sub_workspace.x0 .= warm
+        r = optimize!(sub_workspace)
+        v = _surrogate_objective(model, r.minimizer)
+        candidates = [(x = collect(float.(r.minimizer)), r = r, v = v)]
+        if nstarts > 1 && sob !== nothing
+            for x1 in Iterators.take(sob, nstarts - 1)
+                x1 = clamp.(x1, tr_lb, tr_ub)  # keep the starts inside the box
+                sub_workspace.x0 .= x1
+                rr = optimize!(sub_workspace)
+                vv = _surrogate_objective(model, rr.minimizer)
+                push!(candidates, (x = collect(float.(rr.minimizer)), r = rr, v = vv))
             end
         end
-        # All candidates duplicate evaluated points; keep the best one anyway
-        # rather than wasting the iteration.
-        sub_workspace.x0 .= candidates[1].x
-        return candidates[1].r
-    else
-        sub_workspace.x0 .= candidates[1].x
-        return candidates[1].r
+        sort!(candidates, by = c -> c.v)
+        if dedup && !isempty(surrogates)
+            for c in candidates
+                if _mindist(surrogates, c.x) >= xtol_dup
+                    sub_workspace.x0 .= c.x
+                    return c.r
+                end
+            end
+            # All candidates duplicate evaluated points; keep the best one
+            # anyway rather than wasting the iteration.
+            sub_workspace.x0 .= candidates[1].x
+            return candidates[1].r
+        else
+            sub_workspace.x0 .= candidates[1].x
+            return candidates[1].r
+        end
+    finally
+        setmin!(model, orig_lb)
+        setmax!(model, orig_ub)
     end
 end
 
@@ -1131,6 +1314,7 @@ function optimize!(workspace::BayesOptWorkspace)
     @unpack maxiter, ctol, ftol, postoptimize = options
     @unpack ninit, initialize, init_strategy = options
     @unpack acq_multistart, deduplicate, xtol_dup, verbose, keep_all = options
+    @unpack trust_region, tr_length_init, tr_min_factor, tr_success_max, tr_fail_max = options
     smodel = sub_workspace.model
     fcalls_start = _fcalls(surrogates)
     minval = Inf
@@ -1139,6 +1323,9 @@ function optimize!(workspace::BayesOptWorkspace)
     lb, ub = getmin(smodel), getmax(smodel)
     finite_bounds = all(isfinite, lb) && all(isfinite, ub)
     tol = Tolerance(fabs = ftol, frel = ftol, infeas = ctol)
+    trust_region && !finite_bounds && error(
+        "trust_region = true requires finite variable bounds for all variables.",
+    )
 
     if initialize
         if !finite_bounds
@@ -1172,25 +1359,59 @@ function optimize!(workspace::BayesOptWorkspace)
         sub_workspace.x0 .= minimizer
     end
 
-    # Sobol iterator for the acquisition multistart. The acquisition
-    # candidate-selection seam also supports future trust-region strategies
-    # (e.g. TuRBO-style local trust regions with restarts), which would
-    # replace this global iterator with a trust-region-bounded one.
+    # Sobol iterator for the acquisition multistart (persistent across
+    # iterations; start points are clamped into the current trust region).
     sob = finite_bounds ? ScaledSobolIterator(lb, ub, maxiter * acq_multistart + 1) : nothing
+
+    # TuRBO-style trust-region state: a hyperrectangle with per-dimension edge
+    # lengths `L` centered on the incumbent, grown after consecutive
+    # improvements, shrunk after consecutive failures, and restarted when it
+    # collapses below `L_min`.
+    L_init = tr_length_init .* (ub .- lb)
+    L_min = tr_min_factor .* L_init
+    L = copy(L_init)
+    success = 0
+    failure = 0
+    n_restarts = 0
+    τ_fail = tr_fail_max === nothing ? max(1, length(lb)) : tr_fail_max
 
     iter = 0
     converged = false
     convstate = ConvergenceState{Float64}()
     while iter < maxiter
-        r = _solve_acquisition!(workspace, minimizer, sob, acq_multistart, deduplicate, xtol_dup)
+        tr_lb, tr_ub = trust_region ? _tr_bounds(minimizer, L, lb, ub) : (lb, ub)
+        r = _solve_acquisition!(
+            workspace,
+            minimizer,
+            sob,
+            acq_multistart,
+            deduplicate,
+            xtol_dup,
+            tr_lb,
+            tr_ub,
+        )
         x = copy(r.minimizer)
         iter += 1
 
         prevm = minval
         ob, ineq, eq, feasible = _evaluate!(workspace, x; ctol = ctol)
+        improved = feasible && ob < minval
         if feasible && ob <= minval
             minval = ob
             minimizer = copy(x)
+        end
+        if trust_region
+            L, restart, success, failure = _update_tr(
+                L,
+                improved,
+                success,
+                failure,
+                tr_success_max,
+                τ_fail,
+                L_init,
+                L_min,
+            )
+            restart && (n_restarts += 1)
         end
 
         convstate = ConvergenceState{Float64}()
@@ -1254,6 +1475,7 @@ function optimize!(workspace::BayesOptWorkspace)
         tol,
         convstate,
         fcalls,
+        n_restarts,
         r,
         surrogates,
         keep_all ? workspace.history : nothing,

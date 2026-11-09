@@ -55,6 +55,16 @@ r = optimize(model, alg, [1.234, 2.345], options = options)
   solve the nonconvex acquisition each iteration.
 - `deduplicate = true`, `xtol_dup = 1e-8`: skip candidates that are within
   `xtol_dup` of an already-evaluated point.
+- `trust_region = false`: enable TuRBO-style local trust-region restarts
+  (see below); requires finite variable bounds.
+- `tr_length_init = 0.8`: the initial per-dimension trust-region edge length,
+  as a fraction of the variable box.
+- `tr_min_factor = 1/32`: the minimum trust-region size (as a fraction of
+  `tr_length_init`) below which the region restarts.
+- `tr_success_max = 3`: grow the region after this many consecutive
+  improvements.
+- `tr_fail_max = nothing`: shrink the region after this many consecutive
+  non-improvements (defaults to `max(1, n)`).
 - `acquisition = nothing`: the acquisition function (default `LCB(3.0)`);
   see below. Constraint surrogates always use `LCB(std_multiple)`.
 - `std_multiple = 3.0`: the `η` of the default LCB acquisition.
@@ -124,15 +134,26 @@ The output of `s(x)` in interval mode is an `Interval` with
 the lower bound. Equality constraints should be transformed to a 2-block
 inequality constraint manually as `[lo; -hi]`.
 
+## Trust-region restarts (TuRBO-style)
+
+```julia
+options = BayesOptOptions(sub_options = ..., trust_region = true)
+```
+
+With `trust_region = true`, each acquisition solve is restricted to a local
+hyperrectangle centered on the incumbent, with per-dimension edge length `L`.
+Following the TuRBO success/failure rule, `L` doubles (up to
+`tr_length_init`) after `tr_success_max` consecutive improvements and halves
+after `tr_fail_max` consecutive non-improvements; when the region collapses
+below `tr_min_factor * L_init`, it restarts at full size around the
+incumbent. This is the state-of-the-art approach for high-dimensional
+bound-constrained Bayesian optimization. Batched Thompson sampling over
+multiple trust regions remains a future refinement.
+
 ## Result
 
 `optimize` returns a `BayesOptResult` with `minimizer`, `minimum`, `iter`,
 `maxiter_reached`, `tol`, `convstate`, `fcalls` (the number of expensive
-evaluations performed), the last `sub_result`, the trained `surrogates`, and
-the query `trajectory` when `keep_all = true`.
-
-## Future work
-
-TuRBO-style local trust regions with restarts (the SOTA for high-dimensional
-bound-constrained BO) are the planned next step; the acquisition
-candidate-selection seam in `src/bayesian.jl` is structured to support it.
+evaluations performed), `n_restarts` (the number of trust-region restarts),
+the last `sub_result`, the trained `surrogates`, and the query `trajectory`
+when `keep_all = true`.

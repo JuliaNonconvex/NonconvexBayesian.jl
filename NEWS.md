@@ -26,6 +26,11 @@
   behaviour.
 - Acquisition multistart (`acq_multistart`) with duplicate-point filtering
   (`deduplicate`, `xtol_dup`).
+- TuRBO-style local trust-region restarts (`trust_region`): the acquisition
+  is solved inside a hyperrectangle centered on the incumbent that grows
+  after consecutive improvements, shrinks after consecutive failures, and
+  restarts when it collapses below `tr_min_factor`; `n_restarts` is reported
+  in the result.
 - `callback`, `verbose` and `keep_all` (query trajectory) support in the BO
   loop; `reset!` rebuilds the surrogates so the algorithm can be nested in
   Hyperopt/Multistart.
@@ -41,6 +46,9 @@
 - NonconvexIpopt demoted to a weak dependency; the
   `NonconvexBayesianIpoptExt` extension provides the default
   hyperparameter optimizer (load NonconvexIpopt or pass `fit_optimizer`).
+- DocumenterFragments documentation (`docs/`) covering the options,
+  acquisitions, zero- and first-order surrogates, trust regions, capabilities
+  and the result; built standalone and as a fragment of the Nonconvex docs.
 - Fixed an off-by-one error in the main loop (the loop now performs exactly
   `maxiter` iterations).
 - Fixed the multi-output hyperparameter-MLE path (it indexed observations

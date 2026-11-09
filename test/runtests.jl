@@ -2,7 +2,7 @@ using NonconvexBayesian, NonconvexIpopt, AbstractGPs
 using LinearAlgebra, Test
 using IntervalArithmetic, ForwardDiff
 using NonconvexCore: AbstractOptimizer, ConstraintCapabilities, solver_capabilities, tovecmodel
-import Zygote
+import Zygote, ChainRulesCore
 
 f(x::AbstractVector) = sqrt(x[2])
 g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
@@ -58,6 +58,18 @@ end
     sf2 = NonconvexBayesian.ZeroOrderGPSurrogate(z -> z .^ 2, [0.5, 1.5]; mode = :exact)
     J = Zygote.jacobian(z -> NonconvexBayesian.get_lo(sf2(z)), [0.5, 1.5])[1]
     @test J ≈ diagm([1.0, 3.0])
+
+    # Row-by-row Jacobian seeding (as done by NonconvexCore's Jacobian
+    # assembly) through the equality-constraint transformation must not
+    # descend into IntervalArithmetic's copysign/flipsign internals.
+    seq = NonconvexBayesian.surrogate(z -> z[1] + z[2], x0)
+    seq.mode = :exact
+    seq([1.5, 2.0]); seq([0.8, 1.2])
+    seq.mode = :interval
+    feq = z -> NonconvexBayesian._equality_f(seq)(z)
+    Jeq = Zygote.jacobian(feq, x)[1]
+    @test size(Jeq) == (2, 2)
+    @test all(isfinite, Jeq)
 
     # get_lo re-types Zygote's interval-typed Dual seeds to scalar partials.
     d = ForwardDiff.Dual(interval(1.0, 2.0), (true,))
@@ -884,6 +896,214 @@ end
     # gradients can land the BO loop slightly off, and postoptimize polishes).
     @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
     @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
+end
+
+@testset "Defensive paths" begin
+    # LCB default constructor.
+    @test LCB().η == 3.0
+
+    # get_lo on a Real is the identity.
+    @test NonconvexBayesian.get_lo(3.5) == 3.5
+
+    # The interval perturbation helpers handle values, intervals and zero
+    # cotangents directly.
+    @test NonconvexBayesian._interval_perturbation(interval(1.0, 2.0)) == (1.0, 2.0)
+    @test NonconvexBayesian._interval_perturbation(3.0) == (3.0, 0.0)
+    @test NonconvexBayesian._interval_perturbation(ChainRulesCore.ZeroTangent()) == (0.0, 0.0)
+    @test NonconvexBayesian._perturbation_sum(interval(1.0, 2.0)) == 3.0
+
+    # ScaledSobolIterator length.
+    @test length(NonconvexBayesian.ScaledSobolIterator([0.0], [1.0], 5)) == 5
+
+    # The BareInterval inf rrule (zero cotangent, real and non-real seeds).
+    b = bareinterval(interval(1.0, 2.0))
+    yb, pbb = ChainRulesCore.rrule(inf, b)
+    @test yb == 1.0
+    tb = pbb(1.0)[2]
+    @test tb isa ChainRulesCore.Tangent
+    @test tb.lo == 1.0 && tb.hi == 0.0
+    @test pbb(ChainRulesCore.ZeroTangent())[2] isa ChainRulesCore.ZeroTangent
+    @test pbb(nothing)[2] isa ChainRulesCore.Tangent  # non-Real seed falls back to zero
+end
+
+@testset "EI/PI near-zero variance branches" begin
+    # A noise-free posterior has σ = 0 at the observed points, which forces
+    # the σ < eps branches of the EI/PI acquisitions.
+    fq(x) = x[1]^2 + x[2]^2
+    g0 = GP(ConstMean(0.0), SqExponentialKernel())
+    X0 = [[1.0, 1.0], [2.0, 0.0]]
+    y0 = [1.0, 2.0]
+    pg0 = posterior(g0(X0, 0.0), y0)
+    xobs = [1.0, 1.0]
+    @test abs(NonconvexBayesian._acq_value(EI(), pg0, X0, xobs, 0)) == 0.0
+    @test abs(NonconvexBayesian._acq_value(PI(0.1), pg0, X0, xobs, 0)) == 0.0
+end
+
+@testset "fit_mle! rrule" begin
+    fq(x) = x[1]^2 + x[2]^2
+    s = NonconvexBayesian.surrogate(fq, [1.0, 1.0]; fit_prior = false)
+    y, pb = ChainRulesCore.rrule(
+        NonconvexBayesian.fit_mle!,
+        s,
+        s.gps,
+        s.X,
+        s.y,
+        s.noise,
+        s.last,
+        s.fit_noise,
+    )
+    @test y === s
+    cot = pb(1.0)
+    @test cot isa NTuple{8,ChainRulesCore.NoTangent}
+end
+
+@testset "Non-finite gradient observations" begin
+    # The constructor records the finite gradient at x0; the non-finite
+    # gradient at a later observation is skipped with a warning.
+    s = NonconvexBayesian.first_order_surrogate(
+        x -> x[1] + x[2],
+        [0.0, 0.0];
+        grad_source = x -> x[1] > 0.5 ? [Inf, 1.0] : [1.0, 1.0],
+    )
+    nrows = size(s.∇y[1], 1)
+    s.mode = :exact
+    @test_logs (:warn, r"gradient") s([1.0, 1.0])
+    @test size(s.∇y[1], 1) == nrows  # the non-finite gradient was skipped
+end
+
+@testset "Initialization with infinite bounds" begin
+    m = Model()
+    set_objective!(m, f, flags = [:expensive])
+    addvar!(m, fill(-Inf, 2), fill(Inf, 2))
+    alg = BayesOptAlg(IpoptAlg())
+    options = BayesOptOptions(
+        sub_options = IpoptOptions(print_level = 0),
+        maxiter = 2,
+        ninit = 2,
+        initialize = true,
+        postoptimize = false,
+        fit_prior = false,
+    )
+    r = @test_logs (:warn, r"finite") optimize(m, alg, [0.5, 0.5], options = options)
+    @test r.iter == 2
+end
+
+@testset "Trust-region machinery" begin
+    # Bounds of the hyperrectangle, clamped to the variable bounds.
+    @test NonconvexBayesian._tr_bounds(
+        [0.5, 0.5], [1.0, 1.0], [0.0, 0.0], [1.0, 1.0],
+    ) == ([0.0, 0.0], [1.0, 1.0])
+    @test NonconvexBayesian._tr_bounds(
+        [0.9, 0.5], [0.4, 0.4], [0.0, 0.0], [1.0, 1.0],
+    ) == ([0.7, 0.3], [1.0, 0.7])
+
+    # TuRBO success/failure rule.
+    L_init = [0.8, 0.8]
+    L_min = [0.05, 0.05]
+    # Consecutive improvements double the region, capped at L_init.
+    L, restart, s, f = NonconvexBayesian._update_tr(
+        [0.1, 0.1], true, 2, 0, 3, 4, L_init, L_min,
+    )
+    @test L == [0.2, 0.2] && !restart && s == 3 && f == 0
+    L, restart, s, f = NonconvexBayesian._update_tr(
+        [0.4, 0.4], true, 2, 0, 3, 4, L_init, L_min,
+    )
+    @test L == L_init && !restart && s == 3 && f == 0
+    # Failures reset the success counter...
+    L, restart, s, f = NonconvexBayesian._update_tr(
+        [0.4, 0.4], false, 3, 0, 3, 4, L_init, L_min,
+    )
+    @test L == [0.4, 0.4] && !restart && s == 0 && f == 1
+    # ... and τ_fail consecutive failures halve the region...
+    L, restart, s, f = NonconvexBayesian._update_tr(
+        [0.4, 0.4], false, 0, 3, 3, 4, L_init, L_min,
+    )
+    @test L == [0.2, 0.2] && !restart && s == 0 && f == 0
+    # ... restarting when it collapses below L_min.
+    L, restart, s, f = NonconvexBayesian._update_tr(
+        [0.08, 0.08], false, 0, 3, 3, 4, L_init, L_min,
+    )
+    @test L == L_init && restart && s == 0 && f == 0
+end
+
+@testset "Trust-region optimization" begin
+    # The standard problem converges with the trust region enabled.
+    m = Model()
+    set_objective!(m, f, flags = [:expensive])
+    addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+    add_ineq_constraint!(m, x -> g(x, 2, 0))
+    add_ineq_constraint!(m, x -> g(x, -1, 1))
+    alg = BayesOptAlg(IpoptAlg())
+    options = BayesOptOptions(
+        sub_options = IpoptOptions(print_level = 0),
+        maxiter = 40,
+        ctol = 1e-4,
+        ninit = 5,
+        postoptimize = false,
+        fit_prior = false,
+        trust_region = true,
+    )
+    r = optimize(m, alg, [1.234, 2.345], options = options)
+    @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
+    @test r.n_restarts >= 0
+
+    # A linear objective with a tight trust region forces a deterministic
+    # restart once improvements stall at the boundary.
+    f2(x) = x[2]
+    m2 = Model()
+    set_objective!(m2, f2, flags = [:expensive])
+    addvar!(m2, [0.0, 0.0], [1.0, 1.0])
+    options2 = BayesOptOptions(
+        sub_options = IpoptOptions(print_level = 0),
+        maxiter = 25,
+        ctol = 1e-4,
+        initialize = false,
+        postoptimize = false,
+        fit_prior = false,
+        trust_region = true,
+        tr_length_init = 0.1,
+        tr_min_factor = 0.9,
+        tr_success_max = 3,
+        tr_fail_max = 1,
+    )
+    r2 = optimize(m2, alg, [0.5, 0.5], options = options2)
+    @test r2.minimum < 1e-3  # x2 driven to the lower bound
+    @test r2.n_restarts >= 1
+
+    # Trust regions require finite variable bounds.
+    m3 = Model()
+    set_objective!(m3, f2, flags = [:expensive])
+    addvar!(m3, fill(-Inf, 2), fill(Inf, 2))
+    options3 = BayesOptOptions(
+        sub_options = IpoptOptions(print_level = 0),
+        maxiter = 2,
+        initialize = false,
+        postoptimize = false,
+        fit_prior = false,
+        trust_region = true,
+    )
+    err = try
+        optimize(m3, alg, [0.5, 0.5], options = options3)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("finite", sprint(showerror, err))
+
+    # Trust-region option validation.
+    @test_throws ErrorException BayesOptOptions(
+        sub_options = IpoptOptions(),
+        tr_length_init = 1.5,
+    )
+    @test_throws ErrorException BayesOptOptions(
+        sub_options = IpoptOptions(),
+        tr_min_factor = 0.0,
+    )
+    @test_throws ErrorException BayesOptOptions(
+        sub_options = IpoptOptions(),
+        tr_success_max = 0,
+    )
 end
 
 @testset "Hyperparameter-optimizer fallback (no NonconvexIpopt)" begin

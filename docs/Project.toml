@@ -1,0 +1,6 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+DocumenterFragments = "862d714e-9826-4bb1-afc7-f2d363bba08c"
+NonconvexBayesian = "fb352abc-de7b-48de-9ebd-665b54b5d9b3"
+NonconvexCore = "035190e5-69f1-488f-aaab-becca2889735"
+NonconvexIpopt = "bf347577-a06d-49ad-a669-8c0e005493b8"
