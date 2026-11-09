@@ -27,20 +27,20 @@ end
 function ZeroOrderGPSurrogate(
     f,
     x;
-    kernel = SqExponentialKernel(),
-    X = [x],
-    y = [f(x)],
-    noise = 1e-8,
-    std_multiple = 3.0,
-    mode = :interval,
-    every = 5,
-    skip = 10,
-    last = :all,
-    fit_prior = true,
-    fit_noise = false,
+    kernel=SqExponentialKernel(),
+    X=[x],
+    y=[f(x)],
+    noise=1e-8,
+    std_multiple=3.0,
+    mode=:interval,
+    every=5,
+    skip=10,
+    last=:all,
+    fit_prior=true,
+    fit_noise=false,
 )
     @assert noise > 0
-    gps = [GP(AbstractGPs.ConstMean(0.0), kernel) for _ = 1:length(y[1])]
+    gps = [GP(AbstractGPs.ConstMean(0.0), kernel) for _ in 1:length(y[1])]
     N = length(y[1])
     return ZeroOrderGPSurrogate(
         f,
@@ -57,7 +57,7 @@ function ZeroOrderGPSurrogate(
         fit_prior,
         fit_noise,
         0,
-        (posterior = nothing, dirty = true),
+        (posterior=nothing, dirty=true),
     )
 end
 
@@ -73,16 +73,16 @@ function fit_mle!(s, gps, X, y, noise, last, fit_noise)
     xs_lbs_ubs_uns_2 = get_x_lb_ub.(getproperty.(gps, :kernel))
 
     x1 = mapreduce(vcat, xs_uns_1) do x_un
-        x_un[1]
+        return x_un[1]
     end
     x2 = mapreduce(vcat, xs_lbs_ubs_uns_2) do x_lb_ub_un
-        x_lb_ub_un[1]
+        return x_lb_ub_un[1]
     end
     lb2 = mapreduce(vcat, xs_lbs_ubs_uns_2) do x_lb_ub_un
-        x_lb_ub_un[2]
+        return x_lb_ub_un[2]
     end
     ub2 = mapreduce(vcat, xs_lbs_ubs_uns_2) do x_lb_ub_un
-        x_lb_ub_un[3]
+        return x_lb_ub_un[3]
     end
     if fit_noise
         x = [x1; x2; noise]
@@ -109,7 +109,10 @@ function fit_mle!(s, gps, X, y, noise, last, fit_noise)
                     un1 = xs_uns_1[i][2]
                     l2 = length(xs_lbs_ubs_uns_2[i][1])
                     un2 = xs_lbs_ubs_uns_2[i][4]
-                    _gp = GP(un1(θ[offset+1:offset+l1]), un2(θ[offset+l1+1:offset+l1+l2]))
+                    _gp = GP(
+                        un1(θ[(offset + 1):(offset + l1)]),
+                        un2(θ[(offset + l1 + 1):(offset + l1 + l2)]),
+                    )
                     offset += l1 + l2
                     if fit_noise
                         return logpdf(_gp(_X, θ[end]), getindex.(_y, i))
@@ -123,7 +126,7 @@ function fit_mle!(s, gps, X, y, noise, last, fit_noise)
             un1 = xs_uns_1[1][2]
             l2 = length(xs_lbs_ubs_uns_2[1][1])
             un2 = xs_lbs_ubs_uns_2[1][4]
-            _gp = GP(un1(θ[1:l1]), un2(θ[l1+1:l1+l2]))
+            _gp = GP(un1(θ[1:l1]), un2(θ[(l1 + 1):(l1 + l2)]))
             if fit_noise
                 return -logpdf(_gp(_X, θ[end]), _y)
             else
@@ -133,8 +136,8 @@ function fit_mle!(s, gps, X, y, noise, last, fit_noise)
     end
     m = Model(obj)
     addvar!(m, lb, ub)
-    options = IpoptOptions(max_iter = 20, print_level = 0)
-    res = optimize(m, IpoptAlg(), x, options = options)
+    options = IpoptOptions(; max_iter=20, print_level=0)
+    res = optimize(m, IpoptAlg(), x; options=options)
     x = res.minimizer
     offset = 0
     gps, noise = map(1:length(_y[1])) do i
@@ -142,14 +145,16 @@ function fit_mle!(s, gps, X, y, noise, last, fit_noise)
         un1 = xs_uns_1[i][2]
         l2 = length(xs_lbs_ubs_uns_2[i][1])
         un2 = xs_lbs_ubs_uns_2[i][4]
-        out = GP(un1(x[offset+1:offset+l1]), un2(x[offset+l1+1:offset+l1+l2]))
+        out = GP(
+            un1(x[(offset + 1):(offset + l1)]), un2(x[(offset + l1 + 1):(offset + l1 + l2)])
+        )
         offset += l1 + l2
         return out
     end,
     fit_noise ? x[end] : noise
     s.gps = gps
     s.noise = noise
-    set_cache!(s, (posterior = s.cache.posterior, dirty = true))
+    set_cache!(s, (posterior=s.cache.posterior, dirty=true))
     return s
 end
 function ChainRulesCore.rrule(::typeof(fit_mle!), s, gp, X, y, noise, last, fit_noise)
@@ -165,7 +170,7 @@ function (s::ZeroOrderGPSurrogate)(x)
         if y isa Real ? isfinite(y) : all(isfinite, y)
             s.X = vcat(s.X, [x])
             s.y = vcat(s.y, [y])
-            set_cache!(s, (posterior = s.cache.posterior, dirty = true))
+            set_cache!(s, (posterior=s.cache.posterior, dirty=true))
             s.counter += 1
             if s.fit_prior && s.counter > s.skip * s.every && (s.counter % s.every) == 0
                 fit_mle!(s, s.gps, s.X, s.y, s.noise, s.last, s.fit_noise)
@@ -179,9 +184,9 @@ function (s::ZeroOrderGPSurrogate)(x)
         if s.cache.dirty || s.cache.posterior === nothing
             posterior_cache = map(1:s.N) do i
                 ys = eltype(s.y) <: Real ? s.y : getindex.(s.y, i)
-                posterior(s.gps[i](s.X, s.noise), ys)
+                return posterior(s.gps[i](s.X, s.noise), ys)
             end
-            set_cache!(s, (posterior = posterior_cache, dirty = false))
+            set_cache!(s, (posterior=posterior_cache, dirty=false))
         end
         if eltype(s.y) <: Real
             return _call_gp(s.cache.posterior[1], x, s.std_multiple)
@@ -269,7 +274,7 @@ function _call_gp(pg, x, std_multiple)
 end
 
 function surrogate(f, x; kwargs...)
-    s = ZeroOrderGPSurrogate(f, x; mode = :exact, kwargs...)
+    s = ZeroOrderGPSurrogate(f, x; mode=:exact, kwargs...)
     s(x)
     s.mode = :interval
     return s
@@ -305,23 +310,20 @@ function surrogate_model(vecmodel::VecModel; kwargs...)
         obj = vecmodel.objective
     end
     expensive_eq_constraints = filter(vecmodel.eq_constraints.fs) do c
-        :expensive in c.flags
+        return :expensive in c.flags
     end
     cheap_eq_constraints = filter(vecmodel.eq_constraints.fs) do c
         @assert c isa EqConstraint
-        !(:expensive in c.flags)
+        return !(:expensive in c.flags)
     end
     eq_constraints = VectorOfFunctions(cheap_eq_constraints)
     ineq_constraints1 = Tuple(
-        mapreduce(vcat, expensive_eq_constraints; init = Union{}[]) do c
+        mapreduce(vcat, expensive_eq_constraints; init=Union{}[]) do c
             @assert c isa EqConstraint
             s = surrogate(c, copy(x0); kwargs...)
             push!(surrogates, s)
             return IneqConstraint(
-                _equality_f(s),
-                [zero.(c.rhs); zero.(c.rhs)],
-                c.dim * 2,
-                c.flags,
+                _equality_f(s), [zero.(c.rhs); zero.(c.rhs)], c.dim * 2, c.flags
             )
         end,
     )
@@ -351,13 +353,13 @@ end
 
 function update_surrogates!(model, surrogates, x)
     foreach(surrogates) do s
-        s.mode = :exact
+        return s.mode = :exact
     end
     o = model.objective(x)
     i = model.ineq_constraints(x)
     e = model.eq_constraints(x)
     foreach(surrogates) do s
-        s.mode = :interval
+        return s.mode = :interval
     end
     return o, i, e
 end
@@ -373,21 +375,21 @@ struct BayesOptOptions{S,N<:NamedTuple}
     nt::N
 end
 function BayesOptOptions(;
-    sub_options = IpoptOptions(),
-    initialize = true,
-    ninit = 10,
-    maxiter = 100,
-    std_multiple = 3.0,
-    kernel = SqExponentialKernel(),
-    noise = 1e-8,
-    ctol = 1e-4,
-    ftol = 1e-4,
-    postoptimize = false,
-    fit_prior = true,
-    fit_noise = false,
-    every = 2,
-    skip = 2,
-    last = :all,
+    sub_options=IpoptOptions(),
+    initialize=true,
+    ninit=10,
+    maxiter=100,
+    std_multiple=3.0,
+    kernel=SqExponentialKernel(),
+    noise=1e-8,
+    ctol=1e-4,
+    ftol=1e-4,
+    postoptimize=false,
+    fit_prior=true,
+    fit_noise=false,
+    every=2,
+    skip=2,
+    last=:all,
 )
     return BayesOptOptions(
         sub_options,
@@ -398,24 +400,20 @@ function BayesOptOptions(;
         ftol,
         postoptimize,
         (
-            std_multiple = std_multiple,
-            kernel = kernel,
-            noise = noise,
-            every = every,
-            skip = skip,
-            last = last,
-            fit_prior = fit_prior,
-            fit_noise = fit_noise,
+            std_multiple=std_multiple,
+            kernel=kernel,
+            noise=noise,
+            every=every,
+            skip=skip,
+            last=last,
+            fit_prior=fit_prior,
+            fit_noise=fit_noise,
         ),
     )
 end
 
 mutable struct BayesOptWorkspace{
-    M<:VecModel,
-    S1,
-    X<:AbstractVector,
-    O<:BayesOptOptions,
-    S2<:Union{Tuple,AbstractVector},
+    M<:VecModel,S1,X<:AbstractVector,O<:BayesOptOptions,S2<:Union{Tuple,AbstractVector}
 } <: Workspace
     model::M
     sub_workspace::S1
@@ -447,17 +445,12 @@ Returns an iterator over `N` elements of a Sobol sequence between `lowerbounds`
 and `upperbounds`. The first `N` elements of the Sobol sequence are skipped for
 better uniformity (see https://github.com/stevengj/Sobol.jl)
 """
-function ScaledSobolIterator(
-    lowerbounds,
-    upperbounds,
-    N;
-    seq = SobolSeq(length(lowerbounds)),
-)
+function ScaledSobolIterator(lowerbounds, upperbounds, N; seq=SobolSeq(length(lowerbounds)))
     N > 0 && skip(seq, N)
-    ScaledSobolIterator(lowerbounds, upperbounds, N, seq)
+    return ScaledSobolIterator(lowerbounds, upperbounds, N, seq)
 end
 Base.length(it::ScaledSobolIterator) = it.N
-@inline function Base.iterate(it::ScaledSobolIterator, s = 1)
+@inline function Base.iterate(it::ScaledSobolIterator, s=1)
     s == it.N + 1 && return nothing
     Sobol.next!(it.seq, it.lowerbounds, it.upperbounds), s + 1
 end
@@ -521,7 +514,7 @@ function optimize!(workspace::BayesOptWorkspace)
     end
     if postoptimize
         foreach(surrogates) do s
-            s.mode = :exact
+            return s.mode = :exact
         end
         sub_workspace.x0 .= minimizer
         r = optimize!(sub_workspace)
@@ -530,7 +523,7 @@ function optimize!(workspace::BayesOptWorkspace)
             minimizer = copy(r.minimizer)
         end
         foreach(surrogates) do s
-            s.mode = :interval
+            return s.mode = :interval
         end
     end
     return BayesOptResult(minimizer, minval, iter, r, surrogates)
@@ -545,7 +538,7 @@ function Workspace(
     optimizer::BayesOptAlg,
     x0::AbstractVector;
     options::BayesOptOptions,
-    surrogates = nothing,
+    surrogates=nothing,
     kwargs...,
 )
     if surrogates !== nothing
@@ -553,7 +546,8 @@ function Workspace(
     else
         smodel, surrogates = surrogate_model(model; options.nt...)
     end
-    sub_workspace =
-        Workspace(smodel, optimizer.sub_alg, x0; options = options.sub_options, kwargs...)
+    sub_workspace = Workspace(
+        smodel, optimizer.sub_alg, x0; options=options.sub_options, kwargs...
+    )
     return BayesOptWorkspace(model, sub_workspace, x0, options, surrogates)
 end
