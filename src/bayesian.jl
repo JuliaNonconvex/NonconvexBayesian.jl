@@ -1510,10 +1510,21 @@ end
 
 function NonconvexCore.solver_capabilities(alg::BayesOptAlg)
     # Expensive equality constraints are transformed into two inequality
-    # constraints, so eq/ineq are always supported; sd and integer variables
-    # are forwarded to the sub-solver untouched.
+    # constraints (of any linearity), so both equality and inequality
+    # constraints are always supported; box bounds and continuous variables
+    # are handled by the surrogate machinery. Semidefinite constraints and
+    # binary/integer/unbounded variables are forwarded to the sub-solver
+    # untouched.
     sub = solver_capabilities(alg.sub_alg)
-    return merge_capabilities(sub; eq = true, ineq = true, box = true)
+    return merge_capabilities(
+        sub;
+        linear_eq = true,
+        nonlinear_eq = true,
+        linear_ineq = true,
+        nonlinear_ineq = true,
+        box = true,
+        continuous = true,
+    )
 end
 
 function Workspace(

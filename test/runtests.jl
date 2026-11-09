@@ -10,7 +10,8 @@ g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
 # A sub-optimizer that declares it does not support semidefinite constraints,
 # used to test capability forwarding through BayesOptAlg.
 struct NoSDOptimizer <: AbstractOptimizer end
-NonconvexCore.solver_capabilities(::NoSDOptimizer) = ConstraintCapabilities(sd = false)
+NonconvexCore.solver_capabilities(::NoSDOptimizer) =
+    ConstraintCapabilities(linear_sd = false, nonlinear_sd = false)
 
 @testset "Surrogate" begin
     x = zeros(2)
@@ -712,16 +713,22 @@ end
 
 @testset "Capabilities" begin
     caps = solver_capabilities(BayesOptAlg(IpoptAlg()))
-    @test caps.eq === true
-    @test caps.ineq === true
+    @test caps.linear_eq === true
+    @test caps.nonlinear_eq === true
+    @test caps.linear_ineq === true
+    @test caps.nonlinear_ineq === true
     @test caps.box === true
-    @test caps.sd === false           # forwarded from IpoptAlg's declaration
-    @test caps.integer === false      # forwarded from IpoptAlg's declaration
-    @test caps.infinite_bounds === true  # forwarded from IpoptAlg's declaration
+    @test caps.continuous === true
+    @test caps.linear_sd === false        # forwarded from IpoptAlg's declaration
+    @test caps.nonlinear_sd === false     # forwarded from IpoptAlg's declaration
+    @test caps.binary === false           # forwarded from IpoptAlg's declaration
+    @test caps.integer === false          # forwarded from IpoptAlg's declaration
+    @test caps.infinite_bounds === true   # forwarded from IpoptAlg's declaration
 
     # sd is forwarded from the sub-solver.
     caps2 = solver_capabilities(BayesOptAlg(NoSDOptimizer()))
-    @test caps2.sd === false
+    @test caps2.linear_sd === false
+    @test caps2.nonlinear_sd === false
 
     # A model with an sd constraint errors at the generic optimize level.
     m = Model()

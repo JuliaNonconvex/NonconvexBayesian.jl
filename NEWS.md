@@ -38,8 +38,11 @@
 - `callback`, `verbose` and `keep_all` (query trajectory) support in the BO
   loop; `reset!` rebuilds the surrogates so the algorithm can be nested in
   Hyperopt/Multistart.
-- Capability declaration via `solver_capabilities` (eq/ineq/box supported;
-  semidefinite and integer features forwarded from the sub-solver).
+- Capability declaration via `solver_capabilities` (linear/nonlinear
+  equality and inequality constraints, box bounds and continuous variables
+  supported; semidefinite, discrete and unbounded features forwarded from
+  the sub-solver), aligned with NonconvexCore 2's fine-grained capability
+  system.
 - Hyperparameter MLE controls: `fit_max_iter`, `fit_bounds`, `fit_optimizer`.
 - Exported `surrogate`, `surrogate_model`, `first_order_surrogate`, `get_lo`,
   `update_surrogates!`, `ZeroOrderGPSurrogate`, `FirstOrderGPSurrogate` and
