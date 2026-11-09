@@ -70,6 +70,10 @@ r = optimize(model, alg, [1.234, 2.345], options = options)
 - `std_multiple = 3.0`: the `η` of the default LCB acquisition.
 - `first_order = false`: use [`FirstOrderGPSurrogate`](@ref)s so first-order
   sub-optimizers receive predicted gradients (gradient-enhanced surrogates).
+- `co_kriging = false`: use [`CoKrigingSurrogate`](@ref)s — a single joint
+  GP conditioned on values and gradients, whose predicted gradient is the
+  exact derivative of the predicted value (takes precedence over
+  `first_order`).
 - `grad_source = :forwarddiff`: how gradient observations are collected —
   `:forwarddiff`, `:finite`, `:none` or a user gradient function.
 - `fit_grads = true`: refit the gradient GPs' hyperparameters.
@@ -115,6 +119,18 @@ This is an inexact-gradient scheme: the supplied gradient is the gradient-GP
 prediction and need not equal the AD gradient of the surrogate value. When a
 gradient oracle is unavailable, `grad_source = :none` falls back to the AD
 gradient of the value GP mean.
+
+## Co-kriging (joint value+gradient) surrogates
+
+```julia
+options = BayesOptOptions(sub_options = ..., co_kriging = true)
+```
+
+`CoKrigingSurrogate` conditions a single joint GP on values *and* gradients
+through the kernel-derivative cross-covariances. The predicted gradient is
+the exact derivative of the predicted value (the surrogate is
+self-consistent), and gradient data sharpens the value model itself.
+`co_kriging = true` takes precedence over `first_order`.
 
 ## Advanced: manual surrogates
 

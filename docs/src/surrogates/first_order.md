@@ -35,3 +35,8 @@ At a training point the gradient GPs interpolate the observed gradient.
 
 The gradient GPs' hyperparameters are refitted together with the value GPs
 when `fit_grads = true`.
+
+For a *consistent* gradient-enhanced model — one where the predicted
+gradient is the exact derivative of the predicted value — use the
+[co-kriging surrogates](co_kriging.md), which condition a single joint GP on
+values and gradients.

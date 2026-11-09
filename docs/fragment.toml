@@ -19,6 +19,10 @@ title = "Acquisitions"
 file = "acquisitions.md"
 
 [[pages]]
+title = "Theory"
+file = "theory.md"
+
+[[pages]]
 title = "Surrogates"
   [[pages.children]]
   title = "Zero-order surrogates"
@@ -26,6 +30,9 @@ title = "Surrogates"
   [[pages.children]]
   title = "First-order (gradient-enhanced) surrogates"
   file = "surrogates/first_order.md"
+  [[pages.children]]
+  title = "Co-kriging surrogates"
+  file = "surrogates/co_kriging.md"
 
 [[pages]]
 title = "Trust regions"

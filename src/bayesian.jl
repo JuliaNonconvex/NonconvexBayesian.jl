@@ -338,6 +338,8 @@ function FirstOrderGPSurrogate(
     return s
 end
 
+_records_gradients(::FirstOrderGPSurrogate) = true
+
 function get_x_lb_ub(k::Kernel)
     x, un = flatten(k)
     lb = fill(-Inf, length(x))
@@ -346,7 +348,8 @@ function get_x_lb_ub(k::Kernel)
 end
 
 # The gradient observation at `x` as an `n_outputs × n_inputs` matrix.
-function _grad_observation(s::FirstOrderGPSurrogate, x)
+# Only called for surrogates that record gradients (`_records_gradients`).
+function _grad_observation(s, x)
     src = s.grad_source
     if src === :forwarddiff
         return _forwarddiff_jacobian(s.f, x)
@@ -573,6 +576,9 @@ function (s::AbstractGPSurrogate)(x)
     end
 end
 
+# Whether a surrogate records gradient observations in exact mode.
+_records_gradients(::AbstractGPSurrogate) = false
+
 function _observe!(s::AbstractGPSurrogate, x)
     y = s.f(x)
     if !(y isa Real ? isfinite(y) : all(isfinite, y))
@@ -582,16 +588,18 @@ function _observe!(s::AbstractGPSurrogate, x)
     s.X = vcat(s.X, [x])
     s.y = vcat(s.y, [y])
     set_cache!(s, (posterior = s.cache.posterior, dirty = true))
-    if s isa FirstOrderGPSurrogate && s.grad_source !== :none
+    if _records_gradients(s) && s.grad_source !== :none
         ∇ = _grad_observation(s, x)
         if all(isfinite, ∇)
             for i = 1:s.N
                 s.∇y[i] = vcat(s.∇y[i], ∇[i:i, :])
             end
+            if s isa FirstOrderGPSurrogate
+                set_∇cache!(s, (posterior = s.∇cache.posterior, dirty = true))
+            end
         else
             @warn "Skipping non-finite gradient observation." maxlog = 10
         end
-        set_∇cache!(s, (posterior = s.∇cache.posterior, dirty = true))
     end
     s.counter += 1
     if s.fit_prior && s.counter > s.skip * s.every && (s.counter % s.every) == 0
@@ -727,27 +735,21 @@ end
 """
     surrogate(f, x; kwargs...)
 
-Constructs a [`ZeroOrderGPSurrogate`](@ref) for `f` initialized at `x`,
-evaluates `f(x)` once and switches it to interval mode.
+Constructs a [`ZeroOrderGPSurrogate`](@ref) for `f` initialized at `x`
+(evaluating `f(x)` once) in interval mode.
 """
 function surrogate(f, x; kwargs...)
-    s = ZeroOrderGPSurrogate(f, x; mode = :exact, kwargs...)
-    s(x)
-    s.mode = :interval
-    return s
+    return ZeroOrderGPSurrogate(f, x; mode = :interval, kwargs...)
 end
 
 """
     first_order_surrogate(f, x; kwargs...)
 
-Constructs a [`FirstOrderGPSurrogate`](@ref) for `f` initialized at `x`,
-evaluates `f(x)` (and its gradient) once and switches it to interval mode.
+Constructs a [`FirstOrderGPSurrogate`](@ref) for `f` initialized at `x`
+(evaluating `f(x)` and its gradient once) in interval mode.
 """
 function first_order_surrogate(f, x; kwargs...)
-    s = FirstOrderGPSurrogate(f, x; mode = :exact, kwargs...)
-    s(x)
-    s.mode = :interval
-    return s
+    return FirstOrderGPSurrogate(f, x; mode = :interval, kwargs...)
 end
 
 """
@@ -813,19 +815,29 @@ _equality_f(s) = x -> begin
     return [inf.(t); .-sup.(t)]
 end
 
-# Build a surrogate (zero- or first-order) for a single expensive function.
-# The first-order-only kwargs (grad_source, fit_grads) are consumed here so
-# they are not forwarded to ZeroOrderGPSurrogate.
+# Build a surrogate (zero-, first-order or co-kriging) for a single expensive
+# function. The first-order-only kwargs (grad_source, fit_grads) are consumed
+# here so they are not forwarded to ZeroOrderGPSurrogate. `co_kriging` takes
+# precedence over `first_order`.
 function _make_surrogate(
     f,
     x;
     first_order::Bool,
     acquisition::AbstractAcquisition,
+    co_kriging::Bool = false,
     grad_source = :forwarddiff,
     fit_grads = true,
     kwargs...,
 )
-    if first_order
+    if co_kriging
+        return CoKrigingSurrogate(
+            f,
+            x;
+            acquisition = acquisition,
+            grad_source = grad_source,
+            kwargs...,
+        )
+    elseif first_order
         return FirstOrderGPSurrogate(
             f,
             x;
@@ -1044,6 +1056,7 @@ function BayesOptOptions(;
     first_order = false,
     grad_source = :forwarddiff,
     fit_grads = true,
+    co_kriging = false,
     fit_max_iter = 20,
     fit_bounds = nothing,
     fit_optimizer = nothing,
@@ -1087,6 +1100,7 @@ function BayesOptOptions(;
             first_order = first_order,
             grad_source = grad_source,
             fit_grads = fit_grads,
+            co_kriging = co_kriging,
             fit_max_iter = fit_max_iter,
             fit_bounds = fit_bounds,
             fit_optimizer = fit_optimizer,

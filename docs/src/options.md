@@ -31,6 +31,9 @@ options = BayesOptOptions(
     first_order = false,            # gradient-enhanced surrogates
     grad_source = :forwarddiff,     # :forwarddiff | :finite | :none | ∇f
     fit_grads = true,               # refit the gradient GPs' hyperparameters
+    co_kriging = false,             # joint value+gradient (co-kriging)
+                                    # surrogates; takes precedence over
+                                    # first_order
     kernel = SqExponentialKernel(), # the GP kernel
     noise = 1e-8,                   # observation noise
     fit_prior = true,               # refit hyperparameters by maximum

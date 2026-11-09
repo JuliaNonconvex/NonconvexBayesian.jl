@@ -6,7 +6,7 @@
 
 - `BayesOptOptions` now requires `sub_options` (it no longer defaults to
   Ipopt options, since NonconvexIpopt is now a weak dependency). Requires
-  NonconvexCore 1.7.
+  NonconvexCore 2.
 - `BayesOptResult` now carries the `GenericResult`-style fields
   (`optimizer`, `initial_x`, `iter`, `maxiter_reached`, `tol`, `convstate`,
   `fcalls`) alongside `sub_result`, `surrogates` and `trajectory`.
@@ -21,6 +21,10 @@
   `first_order_surrogate` fit GPs on gradient observations (ForwardDiff,
   finite differences, or a user gradient oracle) and supply the predicted
   gradient to first-order sub-optimizers via the ChainRules rule.
+- Co-kriging surrogates: `CoKrigingSurrogate` and `co_kriging_surrogate`
+  condition one joint GP on values and gradients through the
+  kernel-derivative cross-covariances, making the predicted gradient the
+  exact derivative of the predicted value.
 - `init_strategy = :sobol_direct` (default) initializes the surrogates by
   evaluating the true functions at Sobol points; `:acquisition` keeps the old
   behaviour.

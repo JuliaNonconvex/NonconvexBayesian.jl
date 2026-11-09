@@ -12,8 +12,10 @@ export BayesOptOptions,
     AbstractGPSurrogate,
     ZeroOrderGPSurrogate,
     FirstOrderGPSurrogate,
+    CoKrigingSurrogate,
     surrogate,
     first_order_surrogate,
+    co_kriging_surrogate,
     surrogate_model,
     update_surrogates!,
     get_lo
@@ -28,5 +30,6 @@ using NonconvexCore: NoCallback, Solution, ConvergenceState
 import NonconvexCore: optimize!, Workspace, reset!
 
 include("bayesian.jl")
+include("cokriging.jl")
 
 end

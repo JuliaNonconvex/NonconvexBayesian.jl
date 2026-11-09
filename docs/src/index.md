@@ -17,8 +17,9 @@ and is also built standalone.
 - Acquisition functions: [`LCB`](@ref) (default), [`GPUCB`](@ref) (with a
   `β(t)` schedule), [`EI`](@ref) and [`PI`](@ref); constraint surrogates
   always use `LCB` for conservative feasibility.
-- Zero-order ([`ZeroOrderGPSurrogate`](@ref)) and first-order
-  gradient-enhanced ([`FirstOrderGPSurrogate`](@ref)) surrogates.
+- Zero-order ([`ZeroOrderGPSurrogate`](@ref)), first-order
+  ([`FirstOrderGPSurrogate`](@ref)) and co-kriging
+  ([`CoKrigingSurrogate`](@ref), joint value+gradient) surrogates.
 - Direct-Sobol or acquisition-based initialization, acquisition multistart
   with duplicate-point filtering, and TuRBO-style local trust-region
   restarts for high-dimensional problems.
