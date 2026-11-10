@@ -1,7 +1,7 @@
 """
     jet_report.jl
 
-Run JET analysis on ReliabilityOptimization and write a structured report to
+Run JET analysis on NonconvexBayesian and write a structured report to
 stdout and a file. Designed for CI: outputs a diff-friendly report that can
 be compared across commits. Non-blocking — intended for PR comments and
 tracking, not CI gates.
@@ -23,14 +23,14 @@ end
 
 # Run JET analysis
 report = JET.report_package(
-    ReliabilityOptimization; target_modules=(ReliabilityOptimization,)
+    NonconvexBayesian; target_modules=(NonconvexBayesian,)
 )
 
-# Restrict the report to issues that originate in ReliabilityOptimization's
+# Restrict the report to issues that originate in NonconvexBayesian's
 # own source. `report_package` also analyzes the dependency closure,
 # surfacing errors that are entirely inside third-party packages. Those
 # cannot be fixed here and would drown out the real signal, so filter the
-# reports down to the ones detected in ReliabilityOptimization code.
+# reports down to the ones detected in NonconvexBayesian code.
 pkg_src = dirname(pathof(NonconvexBayesian))
 pkg_root = dirname(pkg_src)
 
