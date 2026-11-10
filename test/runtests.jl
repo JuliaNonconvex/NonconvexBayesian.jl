@@ -1,8 +1,10 @@
 using NonconvexBayesian, NonconvexIpopt, AbstractGPs
 using LinearAlgebra, Test
 using IntervalArithmetic, ForwardDiff
-using NonconvexCore: AbstractOptimizer, ConstraintCapabilities, solver_capabilities, tovecmodel
-import Zygote, ChainRulesCore
+using NonconvexCore:
+    AbstractOptimizer, ConstraintCapabilities, solver_capabilities, tovecmodel
+using Zygote: Zygote
+using ChainRulesCore: ChainRulesCore
 
 f(x::AbstractVector) = sqrt(x[2])
 g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
@@ -10,8 +12,9 @@ g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
 # A sub-optimizer that declares it does not support semidefinite constraints,
 # used to test capability forwarding through BayesOptAlg.
 struct NoSDOptimizer <: AbstractOptimizer end
-NonconvexCore.solver_capabilities(::NoSDOptimizer) =
-    ConstraintCapabilities(linear_sd = false, nonlinear_sd = false)
+function NonconvexCore.solver_capabilities(::NoSDOptimizer)
+    return ConstraintCapabilities(; linear_sd=false, nonlinear_sd=false)
+end
 
 @testset "Surrogate" begin
     x = zeros(2)
@@ -33,30 +36,38 @@ end
     # Interval-mode lower-bound gradient matches finite differences.
     s1 = NonconvexBayesian.surrogate(x -> sqrt(x[2]), x0)
     s1.mode = :exact
-    s1([1.5, 2.0]); s1([0.8, 1.2]); s1([2.0, 1.0])
+    s1([1.5, 2.0])
+    s1([0.8, 1.2])
+    s1([2.0, 1.0])
     s1.mode = :interval
     f1 = z -> NonconvexBayesian.get_lo(s1(z))
-    gfd = [(f1(x + h * [1.0, 0.0]) - f1(x - h * [1.0, 0.0])) / (2h),
-        (f1(x + h * [0.0, 1.0]) - f1(x - h * [0.0, 1.0])) / (2h)]
+    gfd = [
+        (f1(x + h * [1.0, 0.0]) - f1(x - h * [1.0, 0.0])) / (2h),
+        (f1(x + h * [0.0, 1.0]) - f1(x - h * [0.0, 1.0])) / (2h),
+    ]
     gad = Zygote.gradient(f1, x)[1]
     @test gad ≈ gfd rtol = 1e-4
 
     # Broadcast lower-bound gradient (exercises the Dual handling in get_lo).
     s2 = NonconvexBayesian.surrogate(x -> [(2x[1])^3 - x[2], (-x[1] + 1)^3 - x[2]], x0)
     s2.mode = :exact
-    s2([1.5, 2.0]); s2([0.8, 1.2]); s2([2.0, 1.0])
+    s2([1.5, 2.0])
+    s2([0.8, 1.2])
+    s2([2.0, 1.0])
     s2.mode = :interval
     f2 = z -> sum(NonconvexBayesian.get_lo.(s2(z)))
-    gfd2 = [(f2(x + h * [1.0, 0.0]) - f2(x - h * [1.0, 0.0])) / (2h),
-        (f2(x + h * [0.0, 1.0]) - f2(x - h * [0.0, 1.0])) / (2h)]
+    gfd2 = [
+        (f2(x + h * [1.0, 0.0]) - f2(x - h * [1.0, 0.0])) / (2h),
+        (f2(x + h * [0.0, 1.0]) - f2(x - h * [0.0, 1.0])) / (2h),
+    ]
     gad2 = Zygote.gradient(f2, x)[1]
     @test gad2 ≈ gfd2 rtol = 1e-4
 
     # Exact-mode gradient is the gradient of the wrapped function.
-    sf = NonconvexBayesian.ZeroOrderGPSurrogate(sum, [0.5, 1.5]; mode = :exact)
+    sf = NonconvexBayesian.ZeroOrderGPSurrogate(sum, [0.5, 1.5]; mode=:exact)
     g = Zygote.gradient(z -> NonconvexBayesian.get_lo(sf(z)), [0.5, 1.5])[1]
     @test g ≈ [1.0, 1.0]
-    sf2 = NonconvexBayesian.ZeroOrderGPSurrogate(z -> z .^ 2, [0.5, 1.5]; mode = :exact)
+    sf2 = NonconvexBayesian.ZeroOrderGPSurrogate(z -> z .^ 2, [0.5, 1.5]; mode=:exact)
     J = Zygote.jacobian(z -> NonconvexBayesian.get_lo(sf2(z)), [0.5, 1.5])[1]
     @test J ≈ diagm([1.0, 3.0])
 
@@ -65,7 +76,8 @@ end
     # descend into IntervalArithmetic's copysign/flipsign internals.
     seq = NonconvexBayesian.surrogate(z -> z[1] + z[2], x0)
     seq.mode = :exact
-    seq([1.5, 2.0]); seq([0.8, 1.2])
+    seq([1.5, 2.0])
+    seq([0.8, 1.2])
     seq.mode = :interval
     feq = z -> NonconvexBayesian._equality_f(seq)(z)
     Jeq = Zygote.jacobian(feq, x)[1]
@@ -94,7 +106,9 @@ end
     @test s.cache.posterior === post
 
     # Non-finite observations are skipped instead of poisoning the GP.
-    s2 = NonconvexBayesian.ZeroOrderGPSurrogate(x -> 1 / (x[1] - 1.234), [2.0, 2.0]; mode = :exact)
+    s2 = NonconvexBayesian.ZeroOrderGPSurrogate(
+        x -> 1 / (x[1] - 1.234), [2.0, 2.0]; mode=:exact
+    )
     n = length(s2.X)
     r = @test_logs (:warn, r"non-finite") s2([1.234, 1.0])  # evaluates to Inf
     @test isnai(r)
@@ -107,9 +121,10 @@ end
     # EI and PI return degenerate intervals with non-positive values (the
     # acquisitions are negated since the sub-optimizer minimizes).
     for acq in (EI(), PI(), EI(0.1), PI(0.5))
-        s = NonconvexBayesian.ZeroOrderGPSurrogate(fq, x0; acquisition = acq)
+        s = NonconvexBayesian.ZeroOrderGPSurrogate(fq, x0; acquisition=acq)
         s.mode = :exact
-        s([1.1, 1.1]); s([0.9, 0.9])
+        s([1.1, 1.1])
+        s([0.9, 0.9])
         s.mode = :interval
         v = s([1.0, 1.0])
         @test v isa Interval
@@ -117,15 +132,17 @@ end
         @test inf(v) == sup(v) # degenerate
     end
     # EI is more negative far away from the data than at an observed point.
-    s = NonconvexBayesian.ZeroOrderGPSurrogate(fq, x0; acquisition = EI())
+    s = NonconvexBayesian.ZeroOrderGPSurrogate(fq, x0; acquisition=EI())
     s.mode = :exact
-    s([1.1, 1.1]); s([0.9, 0.9])
+    s([1.1, 1.1])
+    s([0.9, 0.9])
     s.mode = :interval
     @test inf(s([5.0, 5.0])) < inf(s([1.0, 1.0])) <= 0
     # LCB keeps the [μ - ησ, μ + ησ] interval with η = std_multiple.
-    s = NonconvexBayesian.ZeroOrderGPSurrogate(fq, x0; std_multiple = 2.0)
+    s = NonconvexBayesian.ZeroOrderGPSurrogate(fq, x0; std_multiple=2.0)
     s.mode = :exact
-    s([1.1, 1.1]); s([0.9, 0.9])
+    s([1.1, 1.1])
+    s([0.9, 0.9])
     s.mode = :interval
     @test s.acquisition isa LCB
     @test s.acquisition.η == 2.0
@@ -133,12 +150,11 @@ end
     @test inf(v) < sup(v)
     # GPUCB with a growing schedule becomes more conservative over time.
     s = NonconvexBayesian.ZeroOrderGPSurrogate(
-        fq,
-        x0;
-        acquisition = GPUCB(1.0; schedule = t -> sqrt(2log(t + 1))),
+        fq, x0; acquisition=GPUCB(1.0; schedule=t -> sqrt(2log(t + 1)))
     )
     s.mode = :exact
-    s([1.1, 1.1]); s([0.9, 0.9])
+    s([1.1, 1.1])
+    s([0.9, 0.9])
     s.mode = :interval
     v1 = s([2.0, 2.0])
     s.counter = 100
@@ -152,9 +168,10 @@ end
     x0 = [0.3, 0.4]
     x = [0.5, 0.6]
 
-    s = NonconvexBayesian.first_order_surrogate(fq, x0; grad_source = ∇fq)
+    s = NonconvexBayesian.first_order_surrogate(fq, x0; grad_source=∇fq)
     s.mode = :exact
-    s([1.5, 2.0]); s([-0.5, 1.0])
+    s([1.5, 2.0])
+    s([-0.5, 1.0])
     s.mode = :interval
 
     # Gradient observations are recorded (one row per observation, one column
@@ -181,7 +198,7 @@ end
     s.mode = :interval
 
     # grad_source = :none falls back to the AD gradient of the value GP mean.
-    s0 = NonconvexBayesian.first_order_surrogate(fq, x0; grad_source = :none)
+    s0 = NonconvexBayesian.first_order_surrogate(fq, x0; grad_source=:none)
     s0.mode = :exact
     s0([1.5, 2.0])
     s0.mode = :interval
@@ -201,7 +218,7 @@ end
     @test gtr1 ≈ ∇fq([1.5, 2.0]) rtol = 1e-3
 
     # Finite-difference gradient observations.
-    s2 = NonconvexBayesian.first_order_surrogate(fq, x0; grad_source = :finite)
+    s2 = NonconvexBayesian.first_order_surrogate(fq, x0; grad_source=:finite)
     s2.mode = :exact
     s2([1.5, 2.0])
     s2.mode = :interval
@@ -221,15 +238,15 @@ end
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 10,
-            ctol = 1e-4,
-            ninit = 2,
-            initialize = true,
-            postoptimize = false,
-            fit_prior = fit_prior,
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=10,
+            ctol=1e-4,
+            ninit=2,
+            initialize=true,
+            postoptimize=false,
+            fit_prior=fit_prior,
         )
-        r = optimize(m, alg, [1.234, 2.345], options = options)
+        r = optimize(m, alg, [1.234, 2.345], options=options)
         @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
         @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
@@ -238,7 +255,7 @@ end
 @testset "Expensive objective" begin
     @testset "Fit prior: $fit_prior" for fit_prior in (true, false)
         m = Model()
-        set_objective!(m, f, flags = [:expensive])
+        set_objective!(m, f, flags=[:expensive])
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, x -> g(x, 2, 0))
         add_ineq_constraint!(m, x -> g(x, -1, 1))
@@ -246,17 +263,17 @@ end
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 10,
-            ctol = 1e-4,
-            ninit = 2,
-            initialize = true,
-            postoptimize = false,
-            skip = 2,
-            every = 2,
-            fit_prior = fit_prior,
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=10,
+            ctol=1e-4,
+            ninit=2,
+            initialize=true,
+            postoptimize=false,
+            skip=2,
+            every=2,
+            fit_prior=fit_prior,
         )
-        r = optimize(m, alg, [1.234, 2.345], options = options)
+        r = optimize(m, alg, [1.234, 2.345], options=options)
         @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
         @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
@@ -265,7 +282,7 @@ end
 @testset "Expensive objective - postoptimize" begin
     @testset "Fit prior: $fit_prior" for fit_prior in (true, false)
         m = Model()
-        set_objective!(m, f, flags = [:expensive])
+        set_objective!(m, f, flags=[:expensive])
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, x -> g(x, 2, 0))
         add_ineq_constraint!(m, x -> g(x, -1, 1))
@@ -273,15 +290,15 @@ end
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 10,
-            ctol = 1e-4,
-            ninit = 2,
-            initialize = true,
-            postoptimize = true,
-            fit_prior = fit_prior,
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=10,
+            ctol=1e-4,
+            ninit=2,
+            initialize=true,
+            postoptimize=true,
+            fit_prior=fit_prior,
         )
-        r = optimize(m, alg, [1.234, 2.345], options = options)
+        r = optimize(m, alg, [1.234, 2.345], options=options)
         @test abs(r.minimum - sqrt(8 / 27)) < 1e-5
         @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-5
     end
@@ -290,7 +307,7 @@ end
 @testset "Expensive objective - no preinitialize" begin
     @testset "Fit prior: $fit_prior" for fit_prior in (true, false)
         m = Model()
-        set_objective!(m, f, flags = [:expensive])
+        set_objective!(m, f, flags=[:expensive])
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, x -> g(x, 2, 0))
         add_ineq_constraint!(m, x -> g(x, -1, 1))
@@ -298,16 +315,16 @@ end
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 10,
-            ctol = 1e-4,
-            initialize = false,
-            postoptimize = false,
-            skip = 2,
-            every = 2,
-            fit_prior = fit_prior,
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=10,
+            ctol=1e-4,
+            initialize=false,
+            postoptimize=false,
+            skip=2,
+            every=2,
+            fit_prior=fit_prior,
         )
-        r = optimize(m, alg, [1.234, 2.345], options = options)
+        r = optimize(m, alg, [1.234, 2.345], options=options)
         @test abs(r.minimum - sqrt(8 / 27)) < 1e-5
         @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-5
     end
@@ -318,21 +335,21 @@ end
         m = Model()
         set_objective!(m, f)
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
-        add_ineq_constraint!(m, x -> g(x, 2, 0), flags = [:expensive])
+        add_ineq_constraint!(m, x -> g(x, 2, 0), flags=[:expensive])
         add_ineq_constraint!(m, x -> g(x, -1, 1))
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 100,
-            ctol = 1e-4,
-            ninit = 5,
-            initialize = true,
-            postoptimize = false,
-            last = 20,
-            fit_prior = fit_prior,
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=100,
+            ctol=1e-4,
+            ninit=5,
+            initialize=true,
+            postoptimize=false,
+            last=20,
+            fit_prior=fit_prior,
         )
-        r = optimize(m, alg, [1.234, 2.345], options = options)
+        r = optimize(m, alg, [1.234, 2.345], options=options)
         @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
         @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
@@ -343,21 +360,21 @@ end
         m = Model()
         set_objective!(m, f)
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
-        add_ineq_constraint!(m, x -> g(x, 2, 0), flags = [:expensive])
+        add_ineq_constraint!(m, x -> g(x, 2, 0), flags=[:expensive])
         add_ineq_constraint!(m, x -> g(x, -1, 1))
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 20,
-            ctol = 1e-4,
-            ninit = 2,
-            initialize = true,
-            postoptimize = false,
-            last = 10,
-            fit_prior = fit_prior,
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=20,
+            ctol=1e-4,
+            ninit=2,
+            initialize=true,
+            postoptimize=false,
+            last=10,
+            fit_prior=fit_prior,
         )
-        r = optimize(m, alg, [1.234, 2.345], options = options)
+        r = optimize(m, alg, [1.234, 2.345], options=options)
         @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
         @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
@@ -368,23 +385,23 @@ end
         m = Model()
         set_objective!(m, f)
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
-        add_ineq_constraint!(m, x -> g(x, 2, 0), flags = [:expensive])
-        add_ineq_constraint!(m, x -> g(x, -1, 1), flags = [:expensive])
+        add_ineq_constraint!(m, x -> g(x, 2, 0), flags=[:expensive])
+        add_ineq_constraint!(m, x -> g(x, -1, 1), flags=[:expensive])
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 40,
-            ctol = 1e-4,
-            ninit = 2,
-            initialize = true,
-            postoptimize = false,
-            every = 5,
-            skip = 2,
-            last = 10,
-            fit_prior = fit_prior,
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=40,
+            ctol=1e-4,
+            ninit=2,
+            initialize=true,
+            postoptimize=false,
+            every=5,
+            skip=2,
+            last=10,
+            fit_prior=fit_prior,
         )
-        r = optimize(m, alg, [1.234, 2.345], options = options)
+        r = optimize(m, alg, [1.234, 2.345], options=options)
         @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
         @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
@@ -397,19 +414,19 @@ end
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, x -> g(x, 2, 0))
         add_ineq_constraint!(m, x -> g(x, -1, 1))
-        add_eq_constraint!(m, x -> sum(x) - 1 / 3 - 8 / 27, flags = [:expensive])
+        add_eq_constraint!(m, x -> sum(x) - 1 / 3 - 8 / 27, flags=[:expensive])
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 30,
-            ctol = 1e-4,
-            ninit = 2,
-            initialize = true,
-            postoptimize = false,
-            last = 10,
-            fit_prior = fit_prior,
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=30,
+            ctol=1e-4,
+            ninit=2,
+            initialize=true,
+            postoptimize=false,
+            last=10,
+            fit_prior=fit_prior,
         )
-        r = optimize(m, alg, [1.234, 2.345], options = options)
+        r = optimize(m, alg, [1.234, 2.345], options=options)
         @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
         @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
@@ -420,21 +437,21 @@ end
         m = Model()
         set_objective!(m, f)
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
-        add_ineq_constraint!(m, x -> [g(x, 2, 0), g(x, -1, 1)], flags = [:expensive])
+        add_ineq_constraint!(m, x -> [g(x, 2, 0), g(x, -1, 1)], flags=[:expensive])
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 40,
-            ctol = 1e-4,
-            ninit = 5,
-            initialize = true,
-            postoptimize = false,
-            skip = 2,
-            every = 2,
-            last = 10,
-            fit_prior = fit_prior,
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=40,
+            ctol=1e-4,
+            ninit=5,
+            initialize=true,
+            postoptimize=false,
+            skip=2,
+            every=2,
+            last=10,
+            fit_prior=fit_prior,
         )
-        r = optimize(m, alg, [1.234, 2.345], options = options)
+        r = optimize(m, alg, [1.234, 2.345], options=options)
         @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
         @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
@@ -443,21 +460,21 @@ end
 @testset "All expensive no equality" begin
     @testset "Fit prior: $fit_prior" for fit_prior in (true, false)
         m = Model()
-        set_objective!(m, f, flags = [:expensive])
+        set_objective!(m, f, flags=[:expensive])
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
-        add_ineq_constraint!(m, x -> [g(x, 2, 0), g(x, -1, 1)], flags = [:expensive])
+        add_ineq_constraint!(m, x -> [g(x, 2, 0), g(x, -1, 1)], flags=[:expensive])
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(),
-            maxiter = 50,
-            ctol = 1e-3,
-            ninit = 2,
-            initialize = true,
-            postoptimize = false,
-            last = 10,
-            fit_prior = fit_prior,
+            sub_options=IpoptOptions(),
+            maxiter=50,
+            ctol=1e-3,
+            ninit=2,
+            initialize=true,
+            postoptimize=false,
+            last=10,
+            fit_prior=fit_prior,
         )
-        r = optimize(m, alg, [1.234, 2.345], options = options)
+        r = optimize(m, alg, [1.234, 2.345], options=options)
         @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
         @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
@@ -466,24 +483,24 @@ end
 @testset "All expensive with equality" begin
     @testset "Fit prior: $fit_prior" for fit_prior in (true, false)
         m = Model()
-        set_objective!(m, f, flags = [:expensive])
+        set_objective!(m, f, flags=[:expensive])
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
-        add_ineq_constraint!(m, x -> [g(x, 2, 0), g(x, -1, 1)], flags = [:expensive])
-        add_eq_constraint!(m, x -> sum(x) - 1 / 3 - 8 / 27, flags = [:expensive])
+        add_ineq_constraint!(m, x -> [g(x, 2, 0), g(x, -1, 1)], flags=[:expensive])
+        add_eq_constraint!(m, x -> sum(x) - 1 / 3 - 8 / 27, flags=[:expensive])
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 100,
-            ctol = 1e-4,
-            ninit = 2,
-            initialize = true,
-            postoptimize = false,
-            last = 30,
-            skip = 2,
-            every = 2,
-            fit_prior = fit_prior,
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=100,
+            ctol=1e-4,
+            ninit=2,
+            initialize=true,
+            postoptimize=false,
+            last=30,
+            skip=2,
+            every=2,
+            fit_prior=fit_prior,
         )
-        r = optimize(m, alg, [1.234, 2.345], options = options)
+        r = optimize(m, alg, [1.234, 2.345], options=options)
         @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
         @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
@@ -496,44 +513,45 @@ end
         s2 = NonconvexBayesian.surrogate(x -> [g(x, 2, 0), g(x, -1, 1)], x0)
 
         m = Model()
-        set_objective!(m, x -> NonconvexBayesian.get_lo(s1(x)), flags = [:expensive])
+        set_objective!(m, x -> NonconvexBayesian.get_lo(s1(x)), flags=[:expensive])
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
-        add_ineq_constraint!(m, x -> NonconvexBayesian.get_lo.(s2(x)), flags = [:expensive])
+        add_ineq_constraint!(m, x -> NonconvexBayesian.get_lo.(s2(x)), flags=[:expensive])
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 50,
-            ctol = 1e-4,
-            ninit = 2,
-            initialize = true,
-            postoptimize = false,
-            fit_prior = fit_prior,
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=50,
+            ctol=1e-4,
+            ninit=2,
+            initialize=true,
+            postoptimize=false,
+            fit_prior=fit_prior,
         )
-        r = optimize(m, alg, [1.234, 2.345], options = options, surrogates = [s1, s2])
+        r = optimize(m, alg, [1.234, 2.345], options=options, surrogates=[s1, s2])
         @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
         @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
 end
 
 @testset "Init strategies" begin
-    @testset "init_strategy = $init_strategy" for init_strategy in (:sobol_direct, :acquisition)
+    @testset "init_strategy = $init_strategy" for init_strategy in
+                                                  (:sobol_direct, :acquisition)
         m = Model()
-        set_objective!(m, f, flags = [:expensive])
+        set_objective!(m, f, flags=[:expensive])
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, x -> g(x, 2, 0))
         add_ineq_constraint!(m, x -> g(x, -1, 1))
 
         alg = BayesOptAlg(IpoptAlg())
         options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 8,
-            ctol = 1e-4,
-            ninit = 3,
-            init_strategy = init_strategy,
-            postoptimize = false,
-            fit_prior = false,
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=8,
+            ctol=1e-4,
+            ninit=3,
+            init_strategy=init_strategy,
+            postoptimize=false,
+            fit_prior=false,
         )
-        r = optimize(m, alg, [1.234, 2.345], options = options)
+        r = optimize(m, alg, [1.234, 2.345], options=options)
         @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
         @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
     end
@@ -541,47 +559,47 @@ end
 
 @testset "Acquisition multistart and deduplication" begin
     m = Model()
-    set_objective!(m, f, flags = [:expensive])
+    set_objective!(m, f, flags=[:expensive])
     addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
     add_ineq_constraint!(m, x -> g(x, 2, 0))
     add_ineq_constraint!(m, x -> g(x, -1, 1))
 
     alg = BayesOptAlg(IpoptAlg())
     options = BayesOptOptions(
-        sub_options = IpoptOptions(print_level = 0),
-        maxiter = 25,
-        ctol = 1e-4,
-        ninit = 3,
-        postoptimize = false,
-        fit_prior = false,
-        acq_multistart = 3,
-        deduplicate = true,
-        xtol_dup = 1e-6,
+        sub_options=IpoptOptions(print_level=0),
+        maxiter=25,
+        ctol=1e-4,
+        ninit=3,
+        postoptimize=false,
+        fit_prior=false,
+        acq_multistart=3,
+        deduplicate=true,
+        xtol_dup=1e-6,
     )
-    r = optimize(m, alg, [1.234, 2.345], options = options)
+    r = optimize(m, alg, [1.234, 2.345], options=options)
     @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
     @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
 end
 
 @testset "First-order Bayesian optimization" begin
     m = Model()
-    set_objective!(m, f, flags = [:expensive])
+    set_objective!(m, f, flags=[:expensive])
     addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
     add_ineq_constraint!(m, x -> g(x, 2, 0))
     add_ineq_constraint!(m, x -> g(x, -1, 1))
 
     alg = BayesOptAlg(IpoptAlg())
     options = BayesOptOptions(
-        sub_options = IpoptOptions(print_level = 0),
-        maxiter = 10,
-        ctol = 1e-4,
-        ninit = 2,
-        postoptimize = false,
-        fit_prior = false,
-        first_order = true,
-        grad_source = :forwarddiff,
+        sub_options=IpoptOptions(print_level=0),
+        maxiter=10,
+        ctol=1e-4,
+        ninit=2,
+        postoptimize=false,
+        fit_prior=false,
+        first_order=true,
+        grad_source=:forwarddiff,
     )
-    r = optimize(m, alg, [1.234, 2.345], options = options)
+    r = optimize(m, alg, [1.234, 2.345], options=options)
     @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
     @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
 end
@@ -590,7 +608,7 @@ end
     ncalls = Ref(0)
     fcounted(x) = (ncalls[] += 1; f(x))
     m = Model()
-    set_objective!(m, fcounted, flags = [:expensive])
+    set_objective!(m, fcounted, flags=[:expensive])
     addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
     add_ineq_constraint!(m, x -> g(x, 2, 0))
     add_ineq_constraint!(m, x -> g(x, -1, 1))
@@ -598,20 +616,16 @@ end
     alg = BayesOptAlg(IpoptAlg())
     cb_counter = Ref(0)
     options = BayesOptOptions(
-        sub_options = IpoptOptions(print_level = 0),
-        maxiter = 5,
-        ctol = 1e-4,
-        ninit = 2,
-        postoptimize = false,
-        fit_prior = false,
-        keep_all = true,
+        sub_options=IpoptOptions(print_level=0),
+        maxiter=5,
+        ctol=1e-4,
+        ninit=2,
+        postoptimize=false,
+        fit_prior=false,
+        keep_all=true,
     )
     r = optimize(
-        m,
-        alg,
-        [1.234, 2.345],
-        options = options,
-        callback = sol -> (cb_counter[] += 1),
+        m, alg, [1.234, 2.345], options=options, callback=sol -> (cb_counter[] += 1)
     )
     @test cb_counter[] == 5            # callback once per BO iteration
     @test r.iter == 5                  # exactly maxiter iterations (off-by-one fixed)
@@ -629,14 +643,14 @@ end
         m,
         alg,
         [1.234, 2.345],
-        options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 2,
-            ctol = 1e-12,
-            ftol = 1e-12,
-            initialize = false,
-            postoptimize = false,
-            fit_prior = false,
+        options=BayesOptOptions(
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=2,
+            ctol=1e-12,
+            ftol=1e-12,
+            initialize=false,
+            postoptimize=false,
+            fit_prior=false,
         ),
     )
     @test r2.iter == 2
@@ -647,14 +661,14 @@ end
         m,
         alg,
         [1.234, 2.345],
-        options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 200,
-            ctol = 1e-4,
-            ftol = 1e-4,
-            ninit = 2,
-            postoptimize = false,
-            fit_prior = false,
+        options=BayesOptOptions(
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=200,
+            ctol=1e-4,
+            ftol=1e-4,
+            ninit=2,
+            postoptimize=false,
+            fit_prior=false,
         ),
     )
     @test !r3.maxiter_reached
@@ -665,13 +679,13 @@ end
         m,
         alg,
         [1.234, 2.345],
-        options = BayesOptOptions(
-            sub_options = IpoptOptions(print_level = 0),
-            maxiter = 3,
-            ninit = 1,
-            postoptimize = false,
-            fit_prior = false,
-            verbose = true,
+        options=BayesOptOptions(
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=3,
+            ninit=1,
+            postoptimize=false,
+            fit_prior=false,
+            verbose=true,
         ),
     )
     @test rv.iter == 3
@@ -679,23 +693,23 @@ end
 
 @testset "reset!" begin
     m = Model()
-    set_objective!(m, f, flags = [:expensive])
+    set_objective!(m, f, flags=[:expensive])
     addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
     add_ineq_constraint!(m, x -> g(x, 2, 0))
     add_ineq_constraint!(m, x -> g(x, -1, 1))
 
     alg = BayesOptAlg(IpoptAlg())
     options = BayesOptOptions(
-        sub_options = IpoptOptions(print_level = 0),
-        maxiter = 4,
-        ctol = 1e-4,
-        ftol = 1e-12,   # never converge early: deterministic evaluation counts
-        ninit = 2,
-        postoptimize = false,
-        fit_prior = false,
+        sub_options=IpoptOptions(print_level=0),
+        maxiter=4,
+        ctol=1e-4,
+        ftol=1e-12,   # never converge early: deterministic evaluation counts
+        ninit=2,
+        postoptimize=false,
+        fit_prior=false,
     )
     vm, x0, _ = tovecmodel(m, [1.234, 2.345])
-    w = Workspace(vm, alg, x0; options = options)
+    w = Workspace(vm, alg, x0; options=options)
     r1 = NonconvexCore.optimize!(w)
     fc1 = r1.fcalls
     @test fc1 > 0
@@ -740,7 +754,7 @@ end
             m,
             BayesOptAlg(NoSDOptimizer()),
             [1.234, 2.345],
-            options = BayesOptOptions(sub_options = nothing),
+            options=BayesOptOptions(sub_options=nothing),
         )
         nothing
     catch e
@@ -758,17 +772,18 @@ end
     s = NonconvexBayesian.surrogate(
         f,
         [1.234, 2.345];
-        every = 1,
-        skip = 0,
-        fit_max_iter = 3,
-        fit_bounds = (lb = -10.0, ub = 10.0),
-        fit_optimizer = (IpoptAlg(), IpoptOptions(max_iter = 3, print_level = 0)),
+        every=1,
+        skip=0,
+        fit_max_iter=3,
+        fit_bounds=(lb=-10.0, ub=10.0),
+        fit_optimizer=(IpoptAlg(), IpoptOptions(max_iter=3, print_level=0)),
     )
     s.mode = :exact
     s([1.5, 2.0])
     @test s.counter == 1  # the factory no longer double-evaluates x0
-    # Invalid fit_bounds lengths are rejected.
+    # Invalid fit_bounds lengths are rejected; valid vectors are broadcast.
     @test_throws ArgumentError NonconvexBayesian._expand_to([1.0, 2.0], 3)
+    @test NonconvexBayesian._expand_to([1.0, 2.0, 3.0], 3) == [1.0, 2.0, 3.0]
 end
 
 @testset "EI and PI gradients" begin
@@ -782,14 +797,18 @@ end
     x = [0.2, 0.0]  # near the best observed point: substantial EI/PI
     h = 1e-6
     for acq in (EI(), PI(0.1))
-        s = NonconvexBayesian.ZeroOrderGPSurrogate(fq, x0; acquisition = acq)
+        s = NonconvexBayesian.ZeroOrderGPSurrogate(fq, x0; acquisition=acq)
         s.mode = :exact
-        s([1.0, 1.0]); s([2.0, 0.0]); s([0.0, 2.0])
+        s([1.0, 1.0])
+        s([2.0, 0.0])
+        s([0.0, 2.0])
         s.mode = :interval
         f1 = z -> NonconvexBayesian.get_lo(s(z))
         @test abs(f1(x)) > 1e-5  # the acquisition is not degenerate here
-        gfd = [(f1(x + h * [1.0, 0.0]) - f1(x - h * [1.0, 0.0])) / (2h),
-            (f1(x + h * [0.0, 1.0]) - f1(x - h * [0.0, 1.0])) / (2h)]
+        gfd = [
+            (f1(x + h * [1.0, 0.0]) - f1(x - h * [1.0, 0.0])) / (2h),
+            (f1(x + h * [0.0, 1.0]) - f1(x - h * [0.0, 1.0])) / (2h),
+        ]
         gad = Zygote.gradient(f1, x)[1]
         @test all(isfinite, gad)
         @test gad ≈ gfd rtol = 1e-4 atol = 1e-8
@@ -801,7 +820,8 @@ end
     x0 = [0.3, 0.4]
     s = NonconvexBayesian.first_order_surrogate(fq2, x0)  # ForwardDiff gradients
     s.mode = :exact
-    s([1.5, 2.0]); s([-0.5, 1.0])
+    s([1.5, 2.0])
+    s([-0.5, 1.0])
     s.mode = :interval
     s([0.5, 0.6])  # build the posterior cache
 
@@ -828,7 +848,7 @@ end
     ∇fq(x) = [2x[1], 6x[2]]
     x0 = [0.3, 0.4]
     # every = 1, skip = 0 forces a refit (value + gradient GPs) per evaluation.
-    s = NonconvexBayesian.first_order_surrogate(fq, x0; grad_source = ∇fq, every = 1, skip = 0)
+    s = NonconvexBayesian.first_order_surrogate(fq, x0; grad_source=∇fq, every=1, skip=0)
     s.mode = :exact
     s([1.5, 2.0])
     s([-0.5, 1.0])
@@ -842,7 +862,7 @@ end
 
 @testset "fit_noise" begin
     fq(x) = x[1]^2 + x[2]^2
-    s = NonconvexBayesian.surrogate(fq, [1.0, 1.0]; fit_noise = true, every = 1, skip = 0)
+    s = NonconvexBayesian.surrogate(fq, [1.0, 1.0]; fit_noise=true, every=1, skip=0)
     s.mode = :exact
     s([1.1, 1.1])
     # The MLE included the noise, which stays within its [1e-6, Inf] bounds
@@ -871,7 +891,7 @@ end
             m,
             BayesOptAlg(IpoptAlg()),
             [1.234, 2.345],
-            options = BayesOptOptions(sub_options = nothing),
+            options=BayesOptOptions(sub_options=nothing),
         )
         nothing
     catch e
@@ -883,22 +903,22 @@ end
 
 @testset "First-order BO with an expensive constraint" begin
     m = Model()
-    set_objective!(m, f, flags = [:expensive])
+    set_objective!(m, f, flags=[:expensive])
     addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
-    add_ineq_constraint!(m, x -> g(x, 2, 0), flags = [:expensive])
+    add_ineq_constraint!(m, x -> g(x, 2, 0), flags=[:expensive])
     add_ineq_constraint!(m, x -> g(x, -1, 1))
     alg = BayesOptAlg(IpoptAlg())
     options = BayesOptOptions(
-        sub_options = IpoptOptions(print_level = 0),
-        maxiter = 40,
-        ctol = 1e-4,
-        ninit = 8,
-        postoptimize = true,  # polish the incumbent on the exact model
-        fit_prior = false,
-        first_order = true,
-        grad_source = :forwarddiff,
+        sub_options=IpoptOptions(print_level=0),
+        maxiter=40,
+        ctol=1e-4,
+        ninit=8,
+        postoptimize=true,  # polish the incumbent on the exact model
+        fit_prior=false,
+        first_order=true,
+        grad_source=:forwarddiff,
     )
-    r = optimize(m, alg, [1.234, 2.345], options = options)
+    r = optimize(m, alg, [1.234, 2.345], options=options)
     # Smoke test for the gradient-enhanced constraint path (the inexact
     # gradients can land the BO loop slightly off, and postoptimize polishes).
     @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
@@ -917,11 +937,11 @@ end
     )
     @test Base.invokelatest(
         NonconvexBayesian._records_gradients,
-        NonconvexBayesian.FirstOrderGPSurrogate(x -> x[1], [0.0]; grad_source = :none),
+        NonconvexBayesian.FirstOrderGPSurrogate(x -> x[1], [0.0]; grad_source=:none),
     )
     @test Base.invokelatest(
         NonconvexBayesian._records_gradients,
-        NonconvexBayesian.CoKrigingSurrogate(x -> x[1], [0.0]; grad_source = :none),
+        NonconvexBayesian.CoKrigingSurrogate(x -> x[1], [0.0]; grad_source=:none),
     )
 
     # get_lo on a Real is the identity.
@@ -931,21 +951,28 @@ end
     # cotangents directly.
     @test NonconvexBayesian._interval_perturbation(interval(1.0, 2.0)) == (1.0, 2.0)
     @test NonconvexBayesian._interval_perturbation(3.0) == (3.0, 0.0)
-    @test NonconvexBayesian._interval_perturbation(ChainRulesCore.ZeroTangent()) == (0.0, 0.0)
+    @test NonconvexBayesian._interval_perturbation(ChainRulesCore.ZeroTangent()) ==
+        (0.0, 0.0)
     @test NonconvexBayesian._perturbation_sum(interval(1.0, 2.0)) == 3.0
 
     # ScaledSobolIterator length.
     @test length(NonconvexBayesian.ScaledSobolIterator([0.0], [1.0], 5)) == 5
 
-    # The BareInterval inf rrule (zero cotangent, real and non-real seeds).
+    # The owned get_lo and _neg_interval ChainRules rules (structural
+    # tangents; zero and non-real cotangent branches).
     b = bareinterval(interval(1.0, 2.0))
-    yb, pbb = ChainRulesCore.rrule(inf, b)
+    yb, pbb = ChainRulesCore.rrule(NonconvexBayesian.get_lo, interval(1.0, 2.0))
     @test yb == 1.0
     tb = pbb(1.0)[2]
     @test tb isa ChainRulesCore.Tangent
-    @test tb.lo == 1.0 && tb.hi == 0.0
+    @test tb.bareinterval.lo == 1.0 && tb.bareinterval.hi == 0.0
     @test pbb(ChainRulesCore.ZeroTangent())[2] isa ChainRulesCore.ZeroTangent
     @test pbb(nothing)[2] isa ChainRulesCore.Tangent  # non-Real seed falls back to zero
+    yn, pbn = ChainRulesCore.rrule(NonconvexBayesian._neg_interval, interval(1.0, 2.0))
+    @test inf(yn) == -2.0 && sup(yn) == -1.0
+    tn = pbn(1.0)[2]  # seeding the output lo by 1 negates into the input hi
+    @test tn.bareinterval.lo == 0.0 && tn.bareinterval.hi == -1.0
+    @test pbn(ChainRulesCore.ZeroTangent())[2] isa ChainRulesCore.ZeroTangent
 end
 
 @testset "EI/PI near-zero variance branches" begin
@@ -963,16 +990,9 @@ end
 
 @testset "fit_mle! rrule" begin
     fq(x) = x[1]^2 + x[2]^2
-    s = NonconvexBayesian.surrogate(fq, [1.0, 1.0]; fit_prior = false)
+    s = NonconvexBayesian.surrogate(fq, [1.0, 1.0]; fit_prior=false)
     y, pb = ChainRulesCore.rrule(
-        NonconvexBayesian.fit_mle!,
-        s,
-        s.gps,
-        s.X,
-        s.y,
-        s.noise,
-        s.last,
-        s.fit_noise,
+        NonconvexBayesian.fit_mle!, s, s.gps, s.X, s.y, s.noise, s.last, s.fit_noise
     )
     @test y === s
     cot = pb(1.0)
@@ -983,9 +1003,7 @@ end
     # The constructor records the finite gradient at x0; the non-finite
     # gradient at a later observation is skipped with a warning.
     s = NonconvexBayesian.first_order_surrogate(
-        x -> x[1] + x[2],
-        [0.0, 0.0];
-        grad_source = x -> x[1] > 0.5 ? [Inf, 1.0] : [1.0, 1.0],
+        x -> x[1] + x[2], [0.0, 0.0]; grad_source=x -> x[1] > 0.5 ? [Inf, 1.0] : [1.0, 1.0]
     )
     nrows = size(s.∇y[1], 1)
     s.mode = :exact
@@ -995,55 +1013,53 @@ end
 
 @testset "Initialization with infinite bounds" begin
     m = Model()
-    set_objective!(m, f, flags = [:expensive])
+    set_objective!(m, f, flags=[:expensive])
     addvar!(m, fill(-Inf, 2), fill(Inf, 2))
     alg = BayesOptAlg(IpoptAlg())
     options = BayesOptOptions(
-        sub_options = IpoptOptions(print_level = 0),
-        maxiter = 2,
-        ninit = 2,
-        initialize = true,
-        postoptimize = false,
-        fit_prior = false,
+        sub_options=IpoptOptions(print_level=0),
+        maxiter=2,
+        ninit=2,
+        initialize=true,
+        postoptimize=false,
+        fit_prior=false,
     )
-    r = @test_logs (:warn, r"finite") optimize(m, alg, [0.5, 0.5], options = options)
+    r = @test_logs (:warn, r"finite") optimize(m, alg, [0.5, 0.5], options=options)
     @test r.iter == 2
 end
 
 @testset "Trust-region machinery" begin
     # Bounds of the hyperrectangle, clamped to the variable bounds.
-    @test NonconvexBayesian._tr_bounds(
-        [0.5, 0.5], [1.0, 1.0], [0.0, 0.0], [1.0, 1.0],
-    ) == ([0.0, 0.0], [1.0, 1.0])
-    @test NonconvexBayesian._tr_bounds(
-        [0.9, 0.5], [0.4, 0.4], [0.0, 0.0], [1.0, 1.0],
-    ) == ([0.7, 0.3], [1.0, 0.7])
+    @test NonconvexBayesian._tr_bounds([0.5, 0.5], [1.0, 1.0], [0.0, 0.0], [1.0, 1.0]) ==
+        ([0.0, 0.0], [1.0, 1.0])
+    @test NonconvexBayesian._tr_bounds([0.9, 0.5], [0.4, 0.4], [0.0, 0.0], [1.0, 1.0]) ==
+        ([0.7, 0.3], [1.0, 0.7])
 
     # TuRBO success/failure rule.
     L_init = [0.8, 0.8]
     L_min = [0.05, 0.05]
     # Consecutive improvements double the region, capped at L_init.
     L, restart, s, f = NonconvexBayesian._update_tr(
-        [0.1, 0.1], true, 2, 0, 3, 4, L_init, L_min,
+        [0.1, 0.1], true, 2, 0, 3, 4, L_init, L_min
     )
     @test L == [0.2, 0.2] && !restart && s == 3 && f == 0
     L, restart, s, f = NonconvexBayesian._update_tr(
-        [0.4, 0.4], true, 2, 0, 3, 4, L_init, L_min,
+        [0.4, 0.4], true, 2, 0, 3, 4, L_init, L_min
     )
     @test L == L_init && !restart && s == 3 && f == 0
     # Failures reset the success counter...
     L, restart, s, f = NonconvexBayesian._update_tr(
-        [0.4, 0.4], false, 3, 0, 3, 4, L_init, L_min,
+        [0.4, 0.4], false, 3, 0, 3, 4, L_init, L_min
     )
     @test L == [0.4, 0.4] && !restart && s == 0 && f == 1
     # ... and τ_fail consecutive failures halve the region...
     L, restart, s, f = NonconvexBayesian._update_tr(
-        [0.4, 0.4], false, 0, 3, 3, 4, L_init, L_min,
+        [0.4, 0.4], false, 0, 3, 3, 4, L_init, L_min
     )
     @test L == [0.2, 0.2] && !restart && s == 0 && f == 0
     # ... restarting when it collapses below L_min.
     L, restart, s, f = NonconvexBayesian._update_tr(
-        [0.08, 0.08], false, 0, 3, 3, 4, L_init, L_min,
+        [0.08, 0.08], false, 0, 3, 3, 4, L_init, L_min
     )
     @test L == L_init && restart && s == 0 && f == 0
 end
@@ -1051,21 +1067,21 @@ end
 @testset "Trust-region optimization" begin
     # The standard problem converges with the trust region enabled.
     m = Model()
-    set_objective!(m, f, flags = [:expensive])
+    set_objective!(m, f, flags=[:expensive])
     addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
     add_ineq_constraint!(m, x -> g(x, 2, 0))
     add_ineq_constraint!(m, x -> g(x, -1, 1))
     alg = BayesOptAlg(IpoptAlg())
     options = BayesOptOptions(
-        sub_options = IpoptOptions(print_level = 0),
-        maxiter = 40,
-        ctol = 1e-4,
-        ninit = 5,
-        postoptimize = false,
-        fit_prior = false,
-        trust_region = true,
+        sub_options=IpoptOptions(print_level=0),
+        maxiter=40,
+        ctol=1e-4,
+        ninit=5,
+        postoptimize=false,
+        fit_prior=false,
+        trust_region=true,
     )
-    r = optimize(m, alg, [1.234, 2.345], options = options)
+    r = optimize(m, alg, [1.234, 2.345], options=options)
     @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
     @test r.n_restarts >= 0
 
@@ -1073,39 +1089,39 @@ end
     # restart once improvements stall at the boundary.
     f2(x) = x[2]
     m2 = Model()
-    set_objective!(m2, f2, flags = [:expensive])
+    set_objective!(m2, f2, flags=[:expensive])
     addvar!(m2, [0.0, 0.0], [1.0, 1.0])
     options2 = BayesOptOptions(
-        sub_options = IpoptOptions(print_level = 0),
-        maxiter = 25,
-        ctol = 1e-4,
-        initialize = false,
-        postoptimize = false,
-        fit_prior = false,
-        trust_region = true,
-        tr_length_init = 0.1,
-        tr_min_factor = 0.9,
-        tr_success_max = 3,
-        tr_fail_max = 1,
+        sub_options=IpoptOptions(print_level=0),
+        maxiter=25,
+        ctol=1e-4,
+        initialize=false,
+        postoptimize=false,
+        fit_prior=false,
+        trust_region=true,
+        tr_length_init=0.1,
+        tr_min_factor=0.9,
+        tr_success_max=3,
+        tr_fail_max=1,
     )
-    r2 = optimize(m2, alg, [0.5, 0.5], options = options2)
+    r2 = optimize(m2, alg, [0.5, 0.5], options=options2)
     @test r2.minimum < 1e-3  # x2 driven to the lower bound
     @test r2.n_restarts >= 1
 
     # Trust regions require finite variable bounds.
     m3 = Model()
-    set_objective!(m3, f2, flags = [:expensive])
+    set_objective!(m3, f2, flags=[:expensive])
     addvar!(m3, fill(-Inf, 2), fill(Inf, 2))
     options3 = BayesOptOptions(
-        sub_options = IpoptOptions(print_level = 0),
-        maxiter = 2,
-        initialize = false,
-        postoptimize = false,
-        fit_prior = false,
-        trust_region = true,
+        sub_options=IpoptOptions(print_level=0),
+        maxiter=2,
+        initialize=false,
+        postoptimize=false,
+        fit_prior=false,
+        trust_region=true,
     )
     err = try
-        optimize(m3, alg, [0.5, 0.5], options = options3)
+        optimize(m3, alg, [0.5, 0.5], options=options3)
         nothing
     catch e
         e
@@ -1115,16 +1131,13 @@ end
 
     # Trust-region option validation.
     @test_throws ErrorException BayesOptOptions(
-        sub_options = IpoptOptions(),
-        tr_length_init = 1.5,
+        sub_options=IpoptOptions(), tr_length_init=1.5
     )
     @test_throws ErrorException BayesOptOptions(
-        sub_options = IpoptOptions(),
-        tr_min_factor = 0.0,
+        sub_options=IpoptOptions(), tr_min_factor=0.0
     )
     @test_throws ErrorException BayesOptOptions(
-        sub_options = IpoptOptions(),
-        tr_success_max = 0,
+        sub_options=IpoptOptions(), tr_success_max=0
     )
 end
 
@@ -1135,9 +1148,10 @@ end
     x = [0.5, 0.6]
     h = 1e-6
 
-    s = NonconvexBayesian.co_kriging_surrogate(fq, x0; grad_source = ∇fq)
+    s = NonconvexBayesian.co_kriging_surrogate(fq, x0; grad_source=∇fq)
     s.mode = :exact
-    s([1.5, 2.0]); s([-0.5, 1.0])
+    s([1.5, 2.0])
+    s([-0.5, 1.0])
     s.mode = :interval
     s(x)  # build the cache
 
@@ -1158,8 +1172,10 @@ end
     # predicted value, so it matches finite differences (unlike the
     # independent first-order surrogate).
     f1 = z -> NonconvexBayesian.get_lo(s(z))
-    gfd = [(f1(x + h * [1.0, 0.0]) - f1(x - h * [1.0, 0.0])) / (2h),
-        (f1(x + h * [0.0, 1.0]) - f1(x - h * [0.0, 1.0])) / (2h)]
+    gfd = [
+        (f1(x + h * [1.0, 0.0]) - f1(x - h * [1.0, 0.0])) / (2h),
+        (f1(x + h * [0.0, 1.0]) - f1(x - h * [0.0, 1.0])) / (2h),
+    ]
     gad = Zygote.gradient(f1, x)[1]
     @test gad ≈ gfd rtol = 1e-4
 
@@ -1181,14 +1197,10 @@ end
     s.mode = :interval
 
     # EI acquisition through the co-kriging posterior.
-    sEI = NonconvexBayesian.co_kriging_surrogate(
-        fq,
-        x0;
-        grad_source = ∇fq,
-        acquisition = EI(),
-    )
+    sEI = NonconvexBayesian.co_kriging_surrogate(fq, x0; grad_source=∇fq, acquisition=EI())
     sEI.mode = :exact
-    sEI([1.5, 2.0]); sEI([-0.5, 1.0])
+    sEI([1.5, 2.0])
+    sEI([-0.5, 1.0])
     sEI.mode = :interval
     v = sEI(x)
     @test v isa Interval && inf(v) <= sup(v)
@@ -1211,15 +1223,11 @@ end
     # every = 1, skip = 0 forces a joint value+gradient MLE refit per
     # evaluation (with fit_noise to exercise the noise-fitting path).
     s = NonconvexBayesian.co_kriging_surrogate(
-        fq,
-        [0.3, 0.4];
-        grad_source = ∇fq,
-        every = 1,
-        skip = 0,
-        fit_noise = true,
+        fq, [0.3, 0.4]; grad_source=∇fq, every=1, skip=0, fit_noise=true
     )
     s.mode = :exact
-    s([1.5, 2.0]); s([-0.5, 1.0])
+    s([1.5, 2.0])
+    s([-0.5, 1.0])
     @test s.counter == 2  # the factory no longer double-evaluates x0
     @test s.noise >= 1e-7
     s.mode = :interval
@@ -1230,9 +1238,11 @@ end
     @test gtr ≈ ∇fq([1.5, 2.0]) rtol = 1e-3
 
     # The `last` window is applied to the values and gradients consistently.
-    s2 = NonconvexBayesian.co_kriging_surrogate(fq, [0.3, 0.4]; grad_source = ∇fq, last = 2)
+    s2 = NonconvexBayesian.co_kriging_surrogate(fq, [0.3, 0.4]; grad_source=∇fq, last=2)
     s2.mode = :exact
-    s2([1.5, 2.0]); s2([-0.5, 1.0]); s2([0.8, 0.9])
+    s2([1.5, 2.0])
+    s2([-0.5, 1.0])
+    s2([0.8, 0.9])
     Xw, yw, ∇w = NonconvexBayesian._window_cokriging_data(s2, s2.last)
     @test length(Xw) == 2
     @test length(yw[1]) == 2
@@ -1248,7 +1258,8 @@ end
     fq2(x) = [x[1]^2 + 3x[2]^2, 2x[1] - x[2]]
     s = NonconvexBayesian.co_kriging_surrogate(fq2, [0.3, 0.4])
     s.mode = :exact
-    s([1.5, 2.0]); s([-0.5, 1.0])
+    s([1.5, 2.0])
+    s([-0.5, 1.0])
     s.mode = :interval
     s([0.5, 0.6])
     @test s.N == 2
@@ -1264,42 +1275,42 @@ end
     # converges to the global optimum.
     ros(x) = (1 - x[1])^2 + 100 * (x[2] - x[1]^2)^2
     m = Model()
-    set_objective!(m, ros, flags = [:expensive])
+    set_objective!(m, ros, flags=[:expensive])
     addvar!(m, [-2.0, -2.0], [2.0, 2.0])
     alg = BayesOptAlg(IpoptAlg())
     options = BayesOptOptions(
-        sub_options = IpoptOptions(print_level = 0),
-        maxiter = 30,
-        ctol = 1e-4,
-        ninit = 5,
-        postoptimize = false,
-        fit_prior = false,
-        co_kriging = true,
-        grad_source = :forwarddiff,
-        acq_multistart = 3,
+        sub_options=IpoptOptions(print_level=0),
+        maxiter=30,
+        ctol=1e-4,
+        ninit=5,
+        postoptimize=false,
+        fit_prior=false,
+        co_kriging=true,
+        grad_source=:forwarddiff,
+        acq_multistart=3,
     )
-    r = optimize(m, alg, [-1.5, 1.0], options = options)
+    r = optimize(m, alg, [-1.5, 1.0], options=options)
     @test r.minimum < 1e-2
     @test norm(r.minimizer - [1.0, 1.0]) < 5e-2
 
     # A constrained problem with co-kriging surrogates and postoptimize
     # polish on the exact model.
     m2 = Model()
-    set_objective!(m2, f, flags = [:expensive])
+    set_objective!(m2, f, flags=[:expensive])
     addvar!(m2, [1e-4, 1e-4], [10.0, 10.0])
-    add_ineq_constraint!(m2, x -> g(x, 2, 0), flags = [:expensive])
+    add_ineq_constraint!(m2, x -> g(x, 2, 0), flags=[:expensive])
     add_ineq_constraint!(m2, x -> g(x, -1, 1))
     options2 = BayesOptOptions(
-        sub_options = IpoptOptions(print_level = 0),
-        maxiter = 10,
-        ctol = 1e-4,
-        ninit = 3,
-        postoptimize = true,
-        fit_prior = false,
-        co_kriging = true,
-        grad_source = :forwarddiff,
+        sub_options=IpoptOptions(print_level=0),
+        maxiter=10,
+        ctol=1e-4,
+        ninit=3,
+        postoptimize=true,
+        fit_prior=false,
+        co_kriging=true,
+        grad_source=:forwarddiff,
     )
-    r2 = optimize(m2, alg, [1.234, 2.345], options = options2)
+    r2 = optimize(m2, alg, [1.234, 2.345], options=options2)
     @test abs(r2.minimum - sqrt(8 / 27)) < 1e-3
     @test norm(r2.minimizer - [1 / 3, 8 / 27]) < 1e-3
 end
@@ -1318,7 +1329,17 @@ end
         println(e isa ErrorException ? "OK" : "WRONGERR")
     end
     """
-    out = read(`$(Base.julia_cmd()) --project=$(dirname(Base.active_project())) -e $script`, String)
+    out = read(
+        `$(Base.julia_cmd()) --project=$(dirname(Base.active_project())) -e $script`, String
+    )
     @test occursin("OK", out)
     @test !occursin("NOERROR", out)
+end
+
+@testset "Aqua" begin
+    include("aqua.jl")
+end
+
+@testset "JET" begin
+    include("jet.jl")
 end

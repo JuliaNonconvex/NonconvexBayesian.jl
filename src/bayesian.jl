@@ -37,7 +37,7 @@ struct GPUCB{B,F} <: AbstractAcquisition
     β::B
     schedule::F
 end
-GPUCB(β = 3.0; schedule = nothing) = GPUCB(β, schedule)
+GPUCB(β=3.0; schedule=nothing) = GPUCB(β, schedule)
 _β(acq::GPUCB, t) = acq.schedule === nothing ? acq.β : acq.schedule(t)
 
 """
@@ -182,24 +182,24 @@ end
 function ZeroOrderGPSurrogate(
     f,
     x;
-    kernel = SqExponentialKernel(),
-    X = [x],
-    y = [f(x)],
-    noise = 1e-8,
-    std_multiple = 3.0,
-    acquisition = nothing,
-    mode = :interval,
-    every = 5,
-    skip = 10,
-    last = :all,
-    fit_prior = true,
-    fit_noise = false,
-    fit_max_iter = 20,
-    fit_bounds = nothing,
-    fit_optimizer = nothing,
+    kernel=SqExponentialKernel(),
+    X=[x],
+    y=[f(x)],
+    noise=1e-8,
+    std_multiple=3.0,
+    acquisition=nothing,
+    mode=:interval,
+    every=5,
+    skip=10,
+    last=:all,
+    fit_prior=true,
+    fit_noise=false,
+    fit_max_iter=20,
+    fit_bounds=nothing,
+    fit_optimizer=nothing,
 )
     @assert noise > 0
-    gps = [GP(AbstractGPs.ConstMean(0.0), kernel) for _ = 1:length(y[1])]
+    gps = [GP(AbstractGPs.ConstMean(0.0), kernel) for _ in 1:length(y[1])]
     N = length(y[1])
     return ZeroOrderGPSurrogate(
         f,
@@ -219,7 +219,7 @@ function ZeroOrderGPSurrogate(
         fit_bounds,
         fit_optimizer,
         0,
-        (posterior = nothing, dirty = true),
+        (posterior=nothing, dirty=true),
     )
 end
 
@@ -279,31 +279,31 @@ end
 function FirstOrderGPSurrogate(
     f,
     x;
-    kernel = SqExponentialKernel(),
-    X = [x],
-    y = [f(x)],
-    noise = 1e-8,
-    std_multiple = 3.0,
-    acquisition = nothing,
-    mode = :interval,
-    every = 5,
-    skip = 10,
-    last = :all,
-    fit_prior = true,
-    fit_noise = false,
-    fit_max_iter = 20,
-    fit_bounds = nothing,
-    fit_optimizer = nothing,
-    grad_source = :forwarddiff,
-    fit_grads = true,
+    kernel=SqExponentialKernel(),
+    X=[x],
+    y=[f(x)],
+    noise=1e-8,
+    std_multiple=3.0,
+    acquisition=nothing,
+    mode=:interval,
+    every=5,
+    skip=10,
+    last=:all,
+    fit_prior=true,
+    fit_noise=false,
+    fit_max_iter=20,
+    fit_bounds=nothing,
+    fit_optimizer=nothing,
+    grad_source=:forwarddiff,
+    fit_grads=true,
 )
     @assert noise > 0
     @assert grad_source isa Symbol || grad_source isa Function
     n_in = length(x)
-    gps = [GP(AbstractGPs.ConstMean(0.0), kernel) for _ = 1:length(y[1])]
+    gps = [GP(AbstractGPs.ConstMean(0.0), kernel) for _ in 1:length(y[1])]
     N = length(y[1])
-    ∇gps = [[GP(AbstractGPs.ConstMean(0.0), kernel) for _ = 1:n_in] for _ = 1:N]
-    ∇y = [zeros(0, n_in) for _ = 1:N]
+    ∇gps = [[GP(AbstractGPs.ConstMean(0.0), kernel) for _ in 1:n_in] for _ in 1:N]
+    ∇y = [zeros(0, n_in) for _ in 1:N]
     s = FirstOrderGPSurrogate(
         f,
         gps,
@@ -326,12 +326,12 @@ function FirstOrderGPSurrogate(
         grad_source,
         fit_grads,
         0,
-        (posterior = nothing, dirty = true),
-        (posterior = nothing, dirty = true),
+        (posterior=nothing, dirty=true),
+        (posterior=nothing, dirty=true),
     )
     if grad_source !== :none
         ∇ = _grad_observation(s, x)
-        for i = 1:N
+        for i in 1:N
             s.∇y[i] = vcat(s.∇y[i], ∇[i:i, :])
         end
     end
@@ -374,11 +374,14 @@ function _finite_difference_jacobian(f, x)
     y = f(x)
     n_out = y isa Real ? 1 : length(y)
     J = zeros(Float64, n_out, n_in)
-    for j = 1:n_in
+    for j in 1:n_in
         h = cbrt(eps(Float64)) * (1 + abs(x[j]))
-        xp = copy(x); xp[j] += h
-        xm = copy(x); xm[j] -= h
-        yp = f(xp); ym = f(xm)
+        xp = copy(x)
+        xp[j] += h
+        xm = copy(x)
+        xm[j] -= h
+        yp = f(xp)
+        ym = f(xm)
         col = (yp .- ym) ./ (2h)
         J[:, j] = col isa Real ? [col] : collect(col)
     end
@@ -397,25 +400,25 @@ function _fit_gp_group!(
     noise,
     last,
     fit_noise;
-    fit_max_iter = 20,
-    fit_bounds = nothing,
-    fit_optimizer = nothing,
+    fit_max_iter=20,
+    fit_bounds=nothing,
+    fit_optimizer=nothing,
 )
     length(gps) == length(ys) ||
         error("Expected one data vector per GP, got $(length(ys)) for $(length(gps)) GPs.")
     xs_uns_1 = flatten.(getproperty.(gps, :mean))
     xs_lbs_ubs_uns_2 = get_x_lb_ub.(getproperty.(gps, :kernel))
     x1 = mapreduce(vcat, xs_uns_1) do x_un
-        x_un[1]
+        return x_un[1]
     end
     x2 = mapreduce(vcat, xs_lbs_ubs_uns_2) do x_lb_ub_un
-        x_lb_ub_un[1]
+        return x_lb_ub_un[1]
     end
     lb2 = mapreduce(vcat, xs_lbs_ubs_uns_2) do x_lb_ub_un
-        x_lb_ub_un[2]
+        return x_lb_ub_un[2]
     end
     ub2 = mapreduce(vcat, xs_lbs_ubs_uns_2) do x_lb_ub_un
-        x_lb_ub_un[3]
+        return x_lb_ub_un[3]
     end
     if fit_noise
         x = [x1; x2; noise]
@@ -442,26 +445,30 @@ function _fit_gp_group!(
     obj(θ) = begin
         offset = 0
         n = fit_noise ? θ[end] : noise
-        val = -sum(1:length(gps)) do i
-            l1 = length(xs_uns_1[i][1])
-            un1 = xs_uns_1[i][2]
-            l2 = length(xs_lbs_ubs_uns_2[i][1])
-            un2 = xs_lbs_ubs_uns_2[i][4]
-            _gp = GP(un1(θ[offset+1:offset+l1]), un2(θ[offset+l1+1:offset+l1+l2]))
-            offset += l1 + l2
-            # Relative jitter keeps the covariance positive definite even when
-            # the optimizer explores extreme kernel amplitudes, where the
-            # finite-precision Cholesky would otherwise fail.
-            dmax = maximum(xk -> _gp.kernel(xk, xk), _X)
-            _n = n + sqrt(eps()) * max(dmax, 1.0)
-            return logpdf(_gp(_X, _n), _ys[i])
-        end
+        val =
+            -sum(1:length(gps)) do i
+                l1 = length(xs_uns_1[i][1])
+                un1 = xs_uns_1[i][2]
+                l2 = length(xs_lbs_ubs_uns_2[i][1])
+                un2 = xs_lbs_ubs_uns_2[i][4]
+                _gp = GP(
+                    un1(θ[(offset + 1):(offset + l1)]),
+                    un2(θ[(offset + l1 + 1):(offset + l1 + l2)]),
+                )
+                offset += l1 + l2
+                # Relative jitter keeps the covariance positive definite even when
+                # the optimizer explores extreme kernel amplitudes, where the
+                # finite-precision Cholesky would otherwise fail.
+                dmax = maximum(xk -> _gp.kernel(xk, xk), _X)
+                _n = n + sqrt(eps()) * max(dmax, 1.0)
+                return logpdf(_gp(_X, _n), _ys[i])
+            end
         return isfinite(val) ? val : 1e10
     end
     m = Model(obj)
     addvar!(m, lb, ub)
     alg, opts = _fit_algorithm(fit_optimizer, fit_max_iter)
-    res = optimize(m, alg, x, options = opts)
+    res = optimize(m, alg, x; options=opts)
     θ = res.minimizer
     offset = 0
     gps = map(1:length(gps)) do i
@@ -469,7 +476,9 @@ function _fit_gp_group!(
         un1 = xs_uns_1[i][2]
         l2 = length(xs_lbs_ubs_uns_2[i][1])
         un2 = xs_lbs_ubs_uns_2[i][4]
-        out = GP(un1(θ[offset+1:offset+l1]), un2(θ[offset+l1+1:offset+l1+l2]))
+        out = GP(
+            un1(θ[(offset + 1):(offset + l1)]), un2(θ[(offset + l1 + 1):(offset + l1 + l2)])
+        )
         offset += l1 + l2
         return out
     end
@@ -477,9 +486,23 @@ function _fit_gp_group!(
     return gps, noise
 end
 
-_expand_to(v, n) = v isa Real ? fill(Float64(v), n) :
-    (length(v) == n ? collect(Float64, v) :
-     throw(ArgumentError("fit_bounds entries must be scalars or vectors of length $n (got $(length(v))).")))
+function _expand_to(v, n)
+    return if v isa Real
+        fill(Float64(v), n)
+    else
+        (
+        if length(v) == n
+            collect(Float64, v)
+        else
+            throw(
+            ArgumentError(
+                "fit_bounds entries must be scalars or vectors of length $n (got $(length(v))).",
+            ),
+        )
+        end
+    )
+    end
+end
 
 # Sentinel so that the NonconvexBayesianIpoptExt extension can *add* a more
 # specific method for the default hyperparameter optimizer (extensions cannot
@@ -491,7 +514,7 @@ _fit_algorithm(::Nothing, fit_max_iter) = _fit_algorithm(NoFitOptimizer(), fit_m
 
 # Fallback: overridden by the more specific NonconvexBayesianIpoptExt method.
 function _fit_algorithm(fit_optimizer, fit_max_iter)
-    error(
+    return error(
         "NonconvexBayesian needs a hyperparameter-optimization solver. Load " *
         "NonconvexIpopt (`using NonconvexIpopt`) or pass `fit_optimizer = (alg, options)` " *
         "to the surrogate or to `BayesOptOptions`.",
@@ -504,23 +527,15 @@ function _per_gp_data(y)
     if y isa Vector{<:Real}
         return [y]
     else
-        return [getindex.(y, i) for i = 1:length(y[1])]
+        return [getindex.(y, i) for i in 1:length(y[1])]
     end
 end
 
 function fit_mle!(s::AbstractGPSurrogate, gps, X, y, noise, last, fit_noise; kwargs...)
-    gps, noise = _fit_gp_group!(
-        gps,
-        X,
-        _per_gp_data(y),
-        noise,
-        last,
-        fit_noise;
-        kwargs...,
-    )
+    gps, noise = _fit_gp_group!(gps, X, _per_gp_data(y), noise, last, fit_noise; kwargs...)
     s.gps = gps
     s.noise = noise
-    set_cache!(s, (posterior = s.cache.posterior, dirty = true))
+    set_cache!(s, (posterior=s.cache.posterior, dirty=true))
     return s
 end
 function ChainRulesCore.rrule(::typeof(fit_mle!), s, gp, X, y, noise, last, fit_noise)
@@ -541,14 +556,14 @@ function fit_mle!(s::AbstractGPSurrogate)
         s.noise,
         s.last,
         s.fit_noise;
-        fit_max_iter = s.fit_max_iter,
-        fit_bounds = s.fit_bounds,
-        fit_optimizer = s.fit_optimizer,
+        fit_max_iter=s.fit_max_iter,
+        fit_bounds=s.fit_bounds,
+        fit_optimizer=s.fit_optimizer,
     )
     if s isa FirstOrderGPSurrogate && s.fit_grads && s.grad_source !== :none
-        for i = 1:s.N
+        for i in 1:s.N
             n_in = size(s.∇y[i], 2)
-            ys = [s.∇y[i][:, j] for j = 1:n_in]
+            ys = [s.∇y[i][:, j] for j in 1:n_in]
             s.∇gps[i], _ = _fit_gp_group!(
                 s.∇gps[i],
                 s.X,
@@ -556,12 +571,12 @@ function fit_mle!(s::AbstractGPSurrogate)
                 s.noise,
                 s.last,
                 false;
-                fit_max_iter = s.fit_max_iter,
-                fit_bounds = s.fit_bounds,
-                fit_optimizer = s.fit_optimizer,
+                fit_max_iter=s.fit_max_iter,
+                fit_bounds=s.fit_bounds,
+                fit_optimizer=s.fit_optimizer,
             )
         end
-        set_∇cache!(s, (posterior = s.∇cache.posterior, dirty = true))
+        set_∇cache!(s, (posterior=s.∇cache.posterior, dirty=true))
     end
     return s
 end
@@ -587,15 +602,15 @@ function _observe!(s::AbstractGPSurrogate, x)
     end
     s.X = vcat(s.X, [x])
     s.y = vcat(s.y, [y])
-    set_cache!(s, (posterior = s.cache.posterior, dirty = true))
+    set_cache!(s, (posterior=s.cache.posterior, dirty=true))
     if _records_gradients(s) && s.grad_source !== :none
         ∇ = _grad_observation(s, x)
         if all(isfinite, ∇)
-            for i = 1:s.N
+            for i in 1:s.N
                 s.∇y[i] = vcat(s.∇y[i], ∇[i:i, :])
             end
             if s isa FirstOrderGPSurrogate
-                set_∇cache!(s, (posterior = s.∇cache.posterior, dirty = true))
+                set_∇cache!(s, (posterior=s.∇cache.posterior, dirty=true))
             end
         else
             @warn "Skipping non-finite gradient observation." maxlog = 10
@@ -612,15 +627,17 @@ function _predict(s::AbstractGPSurrogate, x)
     if s.cache.dirty || s.cache.posterior === nothing
         posterior_cache = map(1:s.N) do i
             ys = eltype(s.y) <: Real ? s.y : getindex.(s.y, i)
-            posterior(s.gps[i](s.X, s.noise), ys)
+            return posterior(s.gps[i](s.X, s.noise), ys)
         end
-        set_cache!(s, (posterior = posterior_cache, dirty = false))
+        set_cache!(s, (posterior=posterior_cache, dirty=false))
     end
     X = s.X
     if eltype(s.y) <: Real
         return _acq_interval(s.acquisition, s.cache.posterior[1], X, x, s.counter)
     else
-        return map(i -> _acq_interval(s.acquisition, s.cache.posterior[i], X, x, s.counter), 1:s.N)
+        return map(
+            i -> _acq_interval(s.acquisition, s.cache.posterior[i], X, x, s.counter), 1:s.N
+        )
     end
 end
 
@@ -642,10 +659,10 @@ function _refresh_∇cache!(s::FirstOrderGPSurrogate)
     end
     posts = map(1:s.N) do i
         map(1:size(s.∇y[i], 2)) do j
-            posterior(s.∇gps[i][j](s.X, s.noise), s.∇y[i][:, j])
+            return posterior(s.∇gps[i][j](s.X, s.noise), s.∇y[i][:, j])
         end
     end
-    set_∇cache!(s, (posterior = posts, dirty = false))
+    set_∇cache!(s, (posterior=posts, dirty=false))
     return posts
 end
 
@@ -739,7 +756,7 @@ Constructs a [`ZeroOrderGPSurrogate`](@ref) for `f` initialized at `x`
 (evaluating `f(x)` once) in interval mode.
 """
 function surrogate(f, x; kwargs...)
-    return ZeroOrderGPSurrogate(f, x; mode = :interval, kwargs...)
+    return ZeroOrderGPSurrogate(f, x; mode=:interval, kwargs...)
 end
 
 """
@@ -749,7 +766,7 @@ Constructs a [`FirstOrderGPSurrogate`](@ref) for `f` initialized at `x`
 (evaluating `f(x)` and its gradient once) in interval mode.
 """
 function first_order_surrogate(f, x; kwargs...)
-    return FirstOrderGPSurrogate(f, x; mode = :interval, kwargs...)
+    return FirstOrderGPSurrogate(f, x; mode=:interval, kwargs...)
 end
 
 """
@@ -764,10 +781,12 @@ get_lo(x::Interval) = inf(x)
 # IntervalArithmetic defines no ChainRules rules, so Zygote's fallback
 # differentiates `inf` through copysign/flipsign, which throws on zero
 # cotangents (e.g. under NonconvexCore's row-by-row Jacobian assembly).
-# Explicit rules return structural tangents (lo seeded, hi zero) so the
-# surrogate gradient path never descends into those internals.
-function ChainRulesCore.rrule(::typeof(inf), x::Interval)
-    function inf_pullback(Δ)
+# Rather than extending the rules of IntervalArithmetic's `inf` (type
+# piracy), the surrogate path routes every bound extraction through our own
+# `get_lo` and `_neg_interval`, whose rules return structural tangents
+# (lo seeded, hi zero) and never descend into those internals.
+function ChainRulesCore.rrule(::typeof(get_lo), x::Interval)
+    function get_lo_pullback(Δ)
         Δ = ChainRulesCore.unthunk(Δ)
         Δ isa ChainRulesCore.AbstractZero &&
             return (ChainRulesCore.NoTangent(), ChainRulesCore.ZeroTangent())
@@ -775,27 +794,38 @@ function ChainRulesCore.rrule(::typeof(inf), x::Interval)
         b = bareinterval(x)
         return (
             ChainRulesCore.NoTangent(),
-            ChainRulesCore.Tangent{typeof(x)}(
-                bareinterval = ChainRulesCore.Tangent{typeof(b)}(lo = Δv, hi = zero(Δv)),
-                decoration = ChainRulesCore.NoTangent(),
-                isguaranteed = ChainRulesCore.NoTangent(),
+            ChainRulesCore.Tangent{typeof(x)}(;
+                bareinterval=ChainRulesCore.Tangent{typeof(b)}(; lo=Δv, hi=zero(Δv)),
+                decoration=ChainRulesCore.NoTangent(),
+                isguaranteed=ChainRulesCore.NoTangent(),
             ),
         )
     end
-    return inf(x), inf_pullback
+    return get_lo(x), get_lo_pullback
 end
-function ChainRulesCore.rrule(::typeof(inf), x::IntervalArithmetic.BareInterval)
-    function inf_pullback(Δ)
+
+# The negated interval `[-sup(x), -inf(x)]`, as an owned function with its
+# own ChainRules rule (so the equality-constraint transformation never
+# differentiates through IntervalArithmetic's unary minus).
+_neg_interval(x::Interval) = interval(-sup(x), -inf(x))
+
+function ChainRulesCore.rrule(::typeof(_neg_interval), x::Interval)
+    function neg_interval_pullback(Δ)
         Δ = ChainRulesCore.unthunk(Δ)
         Δ isa ChainRulesCore.AbstractZero &&
             return (ChainRulesCore.NoTangent(), ChainRulesCore.ZeroTangent())
-        Δv = Δ isa Real ? Δ : 0.0
+        Δlo, Δhi = _interval_perturbation(Δ)
+        b = bareinterval(x)
         return (
             ChainRulesCore.NoTangent(),
-            ChainRulesCore.Tangent{typeof(x)}(lo = Δv, hi = zero(Δv)),
+            ChainRulesCore.Tangent{typeof(x)}(;
+                bareinterval=ChainRulesCore.Tangent{typeof(b)}(; lo=(-Δhi), hi=(-Δlo)),
+                decoration=ChainRulesCore.NoTangent(),
+                isguaranteed=ChainRulesCore.NoTangent(),
+            ),
         )
     end
-    return inf(x), inf_pullback
+    return _neg_interval(x), neg_interval_pullback
 end
 # Zygote's broadcast pullback seeds `ForwardDiff.Dual` values whose partials
 # are typed by the seeded value (an `Interval`); re-type them to the output
@@ -812,7 +842,7 @@ _lo_seed(p) = p isa Interval ? Float64(inf(p)) : Float64(p)
 _lower_f(s) = get_lo ∘ s
 _equality_f(s) = x -> begin
     t = s(x)
-    return [inf.(t); .-sup.(t)]
+    return [get_lo.(t); get_lo.(_neg_interval.(t))]
 end
 
 # Build a surrogate (zero-, first-order or co-kriging) for a single expensive
@@ -824,30 +854,26 @@ function _make_surrogate(
     x;
     first_order::Bool,
     acquisition::AbstractAcquisition,
-    co_kriging::Bool = false,
-    grad_source = :forwarddiff,
-    fit_grads = true,
+    co_kriging::Bool=false,
+    grad_source=:forwarddiff,
+    fit_grads=true,
     kwargs...,
 )
     if co_kriging
         return CoKrigingSurrogate(
-            f,
-            x;
-            acquisition = acquisition,
-            grad_source = grad_source,
-            kwargs...,
+            f, x; acquisition=acquisition, grad_source=grad_source, kwargs...
         )
     elseif first_order
         return FirstOrderGPSurrogate(
             f,
             x;
-            acquisition = acquisition,
-            grad_source = grad_source,
-            fit_grads = fit_grads,
+            acquisition=acquisition,
+            grad_source=grad_source,
+            fit_grads=fit_grads,
             kwargs...,
         )
     else
-        return ZeroOrderGPSurrogate(f, x; acquisition = acquisition, kwargs...)
+        return ZeroOrderGPSurrogate(f, x; acquisition=acquisition, kwargs...)
     end
 end
 
@@ -863,11 +889,7 @@ bound. When `first_order = true`, [`FirstOrderGPSurrogate`](@ref)s are used so
 first-order sub-optimizers receive predicted gradients.
 """
 function surrogate_model(
-    vecmodel::VecModel;
-    first_order = false,
-    acquisition = nothing,
-    std_multiple = 3.0,
-    kwargs...,
+    vecmodel::VecModel; first_order=false, acquisition=nothing, std_multiple=3.0, kwargs...
 )
     surrogates = Function[]
     x0 = getinit(vecmodel)
@@ -876,8 +898,8 @@ function surrogate_model(
         s = _make_surrogate(
             vecmodel.objective.f,
             copy(x0);
-            first_order = first_order,
-            acquisition = obj_acq,
+            first_order=first_order,
+            acquisition=obj_acq,
             kwargs...,
         )
         push!(surrogates, s)
@@ -886,29 +908,26 @@ function surrogate_model(
         obj = vecmodel.objective
     end
     expensive_eq_constraints = filter(vecmodel.eq_constraints.fs) do c
-        :expensive in c.flags
+        return :expensive in c.flags
     end
     cheap_eq_constraints = filter(vecmodel.eq_constraints.fs) do c
         @assert c isa EqConstraint
-        !(:expensive in c.flags)
+        return !(:expensive in c.flags)
     end
     eq_constraints = VectorOfFunctions(cheap_eq_constraints)
     ineq_constraints1 = Tuple(
-        mapreduce(vcat, expensive_eq_constraints; init = Union{}[]) do c
+        mapreduce(vcat, expensive_eq_constraints; init=Union{}[]) do c
             @assert c isa EqConstraint
             s = _make_surrogate(
                 c,
                 copy(x0);
-                first_order = first_order,
-                acquisition = LCB(std_multiple),
+                first_order=first_order,
+                acquisition=LCB(std_multiple),
                 kwargs...,
             )
             push!(surrogates, s)
             return IneqConstraint(
-                _equality_f(s),
-                [zero.(c.rhs); zero.(c.rhs)],
-                c.dim * 2,
-                c.flags,
+                _equality_f(s), [zero.(c.rhs); zero.(c.rhs)], c.dim * 2, c.flags
             )
         end,
     )
@@ -918,8 +937,8 @@ function surrogate_model(
             s = _make_surrogate(
                 c,
                 copy(x0);
-                first_order = first_order,
-                acquisition = LCB(std_multiple),
+                first_order=first_order,
+                acquisition=LCB(std_multiple),
                 kwargs...,
             )
             push!(surrogates, s)
@@ -952,13 +971,13 @@ value, the inequality and the equality constraint values at `x`.
 """
 function update_surrogates!(model, surrogates, x)
     foreach(surrogates) do s
-        s.mode = :exact
+        return s.mode = :exact
     end
     o = model.objective(x)
     i = model.ineq_constraints(x)
     e = model.eq_constraints(x)
     foreach(surrogates) do s
-        s.mode = :interval
+        return s.mode = :interval
     end
     return o, i, e
 end
@@ -1027,39 +1046,39 @@ Options of the [`BayesOptAlg`](@ref) Bayesian-optimization loop. `sub_options`
 """
 function BayesOptOptions(;
     sub_options,
-    initialize = true,
-    ninit = 10,
-    init_strategy = :sobol_direct,
-    maxiter = 100,
-    std_multiple = 3.0,
-    kernel = SqExponentialKernel(),
-    noise = 1e-8,
-    acquisition = nothing,
-    ctol = 1e-4,
-    ftol = 1e-4,
-    postoptimize = true,
-    verbose = false,
-    keep_all = false,
-    acq_multistart = 1,
-    deduplicate = true,
-    xtol_dup = 1e-8,
-    trust_region = false,
-    tr_length_init = 0.8,
-    tr_min_factor = 1 / 32,
-    tr_success_max = 3,
-    tr_fail_max = nothing,
-    fit_prior = true,
-    fit_noise = false,
-    every = 2,
-    skip = 2,
-    last = :all,
-    first_order = false,
-    grad_source = :forwarddiff,
-    fit_grads = true,
-    co_kriging = false,
-    fit_max_iter = 20,
-    fit_bounds = nothing,
-    fit_optimizer = nothing,
+    initialize=true,
+    ninit=10,
+    init_strategy=:sobol_direct,
+    maxiter=100,
+    std_multiple=3.0,
+    kernel=SqExponentialKernel(),
+    noise=1e-8,
+    acquisition=nothing,
+    ctol=1e-4,
+    ftol=1e-4,
+    postoptimize=true,
+    verbose=false,
+    keep_all=false,
+    acq_multistart=1,
+    deduplicate=true,
+    xtol_dup=1e-8,
+    trust_region=false,
+    tr_length_init=0.8,
+    tr_min_factor=1 / 32,
+    tr_success_max=3,
+    tr_fail_max=nothing,
+    fit_prior=true,
+    fit_noise=false,
+    every=2,
+    skip=2,
+    last=:all,
+    first_order=false,
+    grad_source=:forwarddiff,
+    fit_grads=true,
+    co_kriging=false,
+    fit_max_iter=20,
+    fit_bounds=nothing,
+    fit_optimizer=nothing,
 )
     init_strategy in (:sobol_direct, :acquisition) ||
         error("init_strategy must be :sobol_direct or :acquisition, got $(init_strategy).")
@@ -1088,22 +1107,22 @@ function BayesOptOptions(;
         tr_success_max,
         tr_fail_max,
         (
-            std_multiple = std_multiple,
-            kernel = kernel,
-            noise = noise,
-            every = every,
-            skip = skip,
-            last = last,
-            fit_prior = fit_prior,
-            fit_noise = fit_noise,
-            acquisition = acquisition,
-            first_order = first_order,
-            grad_source = grad_source,
-            fit_grads = fit_grads,
-            co_kriging = co_kriging,
-            fit_max_iter = fit_max_iter,
-            fit_bounds = fit_bounds,
-            fit_optimizer = fit_optimizer,
+            std_multiple=std_multiple,
+            kernel=kernel,
+            noise=noise,
+            every=every,
+            skip=skip,
+            last=last,
+            fit_prior=fit_prior,
+            fit_noise=fit_noise,
+            acquisition=acquisition,
+            first_order=first_order,
+            grad_source=grad_source,
+            fit_grads=fit_grads,
+            co_kriging=co_kriging,
+            fit_max_iter=fit_max_iter,
+            fit_bounds=fit_bounds,
+            fit_optimizer=fit_optimizer,
         ),
     )
 end
@@ -1182,22 +1201,17 @@ Returns an iterator over `N` elements of a Sobol sequence between `lowerbounds`
 and `upperbounds`. The first `N` elements of the Sobol sequence are skipped for
 better uniformity (see https://github.com/stevengj/Sobol.jl)
 """
-function ScaledSobolIterator(
-    lowerbounds,
-    upperbounds,
-    N;
-    seq = SobolSeq(length(lowerbounds)),
-)
+function ScaledSobolIterator(lowerbounds, upperbounds, N; seq=SobolSeq(length(lowerbounds)))
     N > 0 && skip(seq, N)
-    ScaledSobolIterator(lowerbounds, upperbounds, N, seq)
+    return ScaledSobolIterator(lowerbounds, upperbounds, N, seq)
 end
 Base.length(it::ScaledSobolIterator) = it.N
-@inline function Base.iterate(it::ScaledSobolIterator, s = 1)
+@inline function Base.iterate(it::ScaledSobolIterator, s=1)
     s == it.N + 1 && return nothing
     Sobol.next!(it.seq, it.lowerbounds, it.upperbounds), s + 1
 end
 
-_fcalls(surrogates) = sum(s -> s.counter, surrogates; init = 0)
+_fcalls(surrogates) = sum(s -> s.counter, surrogates; init=0)
 
 # ================================================================
 # TuRBO-style local trust regions
@@ -1244,7 +1258,9 @@ end
 # Evaluate the true (expensive) functions at `x` through the surrogates and
 # report the objective value and feasibility.
 function _evaluate!(workspace, x; ctol)
-    ob, ineq, eq = update_surrogates!(workspace.sub_workspace.model, workspace.surrogates, x)
+    ob, ineq, eq = update_surrogates!(
+        workspace.sub_workspace.model, workspace.surrogates, x
+    )
     feasible = all(ineq .<= ctol) && all(abs.(eq) .<= ctol)
     return ob, ineq, eq, feasible
 end
@@ -1272,14 +1288,7 @@ end
 # are skipped in favour of the next-best candidate. The subproblem bounds are
 # restored before returning.
 function _solve_acquisition!(
-    workspace::BayesOptWorkspace,
-    warm,
-    sob,
-    nstarts,
-    dedup,
-    xtol_dup,
-    tr_lb,
-    tr_ub,
+    workspace::BayesOptWorkspace, warm, sob, nstarts, dedup, xtol_dup, tr_lb, tr_ub
 )
     @unpack sub_workspace, surrogates = workspace
     model = sub_workspace.model
@@ -1290,17 +1299,17 @@ function _solve_acquisition!(
         sub_workspace.x0 .= warm
         r = optimize!(sub_workspace)
         v = _surrogate_objective(model, r.minimizer)
-        candidates = [(x = collect(float.(r.minimizer)), r = r, v = v)]
+        candidates = [(x=collect(float.(r.minimizer)), r=r, v=v)]
         if nstarts > 1 && sob !== nothing
             for x1 in Iterators.take(sob, nstarts - 1)
                 x1 = clamp.(x1, tr_lb, tr_ub)  # keep the starts inside the box
                 sub_workspace.x0 .= x1
                 rr = optimize!(sub_workspace)
                 vv = _surrogate_objective(model, rr.minimizer)
-                push!(candidates, (x = collect(float.(rr.minimizer)), r = rr, v = vv))
+                push!(candidates, (x=collect(float.(rr.minimizer)), r=rr, v=vv))
             end
         end
-        sort!(candidates, by = c -> c.v)
+        sort!(candidates; by=c -> c.v)
         if dedup && !isempty(surrogates)
             for c in candidates
                 if _mindist(surrogates, c.x) >= xtol_dup
@@ -1328,7 +1337,8 @@ function optimize!(workspace::BayesOptWorkspace)
     @unpack maxiter, ctol, ftol, postoptimize = options
     @unpack ninit, initialize, init_strategy = options
     @unpack acq_multistart, deduplicate, xtol_dup, verbose, keep_all = options
-    @unpack trust_region, tr_length_init, tr_min_factor, tr_success_max, tr_fail_max = options
+    @unpack trust_region, tr_length_init, tr_min_factor, tr_success_max, tr_fail_max =
+        options
     smodel = sub_workspace.model
     fcalls_start = _fcalls(surrogates)
     minval = Inf
@@ -1336,10 +1346,10 @@ function optimize!(workspace::BayesOptWorkspace)
     prevx = copy(x0)
     lb, ub = getmin(smodel), getmax(smodel)
     finite_bounds = all(isfinite, lb) && all(isfinite, ub)
-    tol = Tolerance(fabs = ftol, frel = ftol, infeas = ctol)
-    trust_region && !finite_bounds && error(
-        "trust_region = true requires finite variable bounds for all variables.",
-    )
+    tol = Tolerance(; fabs=ftol, frel=ftol, infeas=ctol)
+    trust_region &&
+        !finite_bounds &&
+        error("trust_region = true requires finite variable bounds for all variables.")
 
     if initialize
         if !finite_bounds
@@ -1348,7 +1358,7 @@ function optimize!(workspace::BayesOptWorkspace)
             # Cheap standard BO initialization: evaluate the true expensive
             # functions directly at the Sobol points.
             for x1 in ScaledSobolIterator(lb, ub, ninit)
-                ob, _, _, feasible = _evaluate!(workspace, x1; ctol = ctol)
+                ob, _, _, feasible = _evaluate!(workspace, x1; ctol=ctol)
                 if feasible && ob <= minval
                     minval = ob
                     minimizer = copy(x1)
@@ -1361,7 +1371,7 @@ function optimize!(workspace::BayesOptWorkspace)
                 sub_workspace.x0 .= x1
                 r = optimize!(sub_workspace)
                 if r.minimizer != x2
-                    ob, _, _, feasible = _evaluate!(workspace, r.minimizer; ctol = ctol)
+                    ob, _, _, feasible = _evaluate!(workspace, r.minimizer; ctol=ctol)
                     if feasible && ob <= minval
                         minval = ob
                         minimizer = copy(r.minimizer)
@@ -1375,7 +1385,8 @@ function optimize!(workspace::BayesOptWorkspace)
 
     # Sobol iterator for the acquisition multistart (persistent across
     # iterations; start points are clamped into the current trust region).
-    sob = finite_bounds ? ScaledSobolIterator(lb, ub, maxiter * acq_multistart + 1) : nothing
+    sob =
+        finite_bounds ? ScaledSobolIterator(lb, ub, maxiter * acq_multistart + 1) : nothing
 
     # TuRBO-style trust-region state: a hyperrectangle with per-dimension edge
     # lengths `L` centered on the incumbent, grown after consecutive
@@ -1392,23 +1403,17 @@ function optimize!(workspace::BayesOptWorkspace)
     iter = 0
     converged = false
     convstate = ConvergenceState{Float64}()
+    r = nothing
     while iter < maxiter
         tr_lb, tr_ub = trust_region ? _tr_bounds(minimizer, L, lb, ub) : (lb, ub)
         r = _solve_acquisition!(
-            workspace,
-            minimizer,
-            sob,
-            acq_multistart,
-            deduplicate,
-            xtol_dup,
-            tr_lb,
-            tr_ub,
+            workspace, minimizer, sob, acq_multistart, deduplicate, xtol_dup, tr_lb, tr_ub
         )
         x = copy(r.minimizer)
         iter += 1
 
         prevm = minval
-        ob, ineq, eq, feasible = _evaluate!(workspace, x; ctol = ctol)
+        ob, ineq, eq, feasible = _evaluate!(workspace, x; ctol=ctol)
         improved = feasible && ob < minval
         if feasible && ob <= minval
             minval = ob
@@ -1416,24 +1421,16 @@ function optimize!(workspace::BayesOptWorkspace)
         end
         if trust_region
             L, restart, success, failure = _update_tr(
-                L,
-                improved,
-                success,
-                failure,
-                tr_success_max,
-                τ_fail,
-                L_init,
-                L_min,
+                L, improved, success, failure, tr_success_max, τ_fail, L_init, L_min
             )
             restart && (n_restarts += 1)
         end
 
         convstate = ConvergenceState{Float64}()
-        convstate.Δx = maximum(abs.(x[j] - prevx[j]) for j = 1:length(x))
+        convstate.Δx = maximum(abs.(x[j] - prevx[j]) for j in 1:length(x))
         convstate.Δf = abs(ob - prevm)
         convstate.relΔf = abs((ob - prevm) / (prevm + ftol))
-        convstate.infeas =
-            max(maximum(ineq; init = 0.0), 0.0, maximum(abs.(eq); init = 0.0))
+        convstate.infeas = max(maximum(ineq; init=0.0), 0.0, maximum(abs.(eq); init=0.0))
         convstate.converged = feasible && abs((ob - prevm) / (prevm + ftol)) <= ftol
 
         if callback !== NoCallback()
@@ -1451,9 +1448,11 @@ function optimize!(workspace::BayesOptWorkspace)
                 ),
             )
         end
-        keep_all && push!(workspace.history, (x = copy(x), f = ob, feasible = feasible, iter = iter))
+        keep_all &&
+            push!(workspace.history, (x=copy(x), f=ob, feasible=feasible, iter=iter))
         if verbose
-            @info "BayesOpt" iter = iter objective = ob feasible = feasible best = minval convergence = convstate.converged
+            @info "BayesOpt" iter = iter objective = ob feasible = feasible best = minval convergence =
+                convstate.converged
         end
         prevx = copy(x)
         converged = convstate.converged
@@ -1465,7 +1464,7 @@ function optimize!(workspace::BayesOptWorkspace)
 
     if postoptimize
         foreach(surrogates) do s
-            s.mode = :exact
+            return s.mode = :exact
         end
         sub_workspace.x0 .= minimizer
         r = optimize!(sub_workspace)
@@ -1474,7 +1473,7 @@ function optimize!(workspace::BayesOptWorkspace)
             minimizer = copy(r.minimizer)
         end
         foreach(surrogates) do s
-            s.mode = :interval
+            return s.mode = :interval
         end
     end
 
@@ -1518,12 +1517,12 @@ function NonconvexCore.solver_capabilities(alg::BayesOptAlg)
     sub = solver_capabilities(alg.sub_alg)
     return merge_capabilities(
         sub;
-        linear_eq = true,
-        nonlinear_eq = true,
-        linear_ineq = true,
-        nonlinear_ineq = true,
-        box = true,
-        continuous = true,
+        linear_eq=true,
+        nonlinear_eq=true,
+        linear_ineq=true,
+        nonlinear_ineq=true,
+        box=true,
+        continuous=true,
     )
 end
 
@@ -1532,7 +1531,7 @@ function Workspace(
     optimizer::BayesOptAlg,
     x0::AbstractVector;
     options::BayesOptOptions,
-    surrogates = nothing,
+    surrogates=nothing,
     kwargs...,
 )
     callback = get(kwargs, :callback, NoCallback())
@@ -1544,17 +1543,13 @@ function Workspace(
     checksubproblem!(
         smodel,
         optimizer.sub_alg;
-        hint = "The surrogate subproblem has features that the sub-optimizer cannot handle.",
+        hint="The surrogate subproblem has features that the sub-optimizer cannot handle.",
     )
     # The meta-algorithm owns the callback: it is invoked once per BO
     # iteration, so it is not forwarded to the internal surrogate solves.
-    sub_kwargs = Base.structdiff(NamedTuple(kwargs), (callback = callback,))
+    sub_kwargs = Base.structdiff(NamedTuple(kwargs), (callback=callback,))
     sub_workspace = Workspace(
-        smodel,
-        optimizer.sub_alg,
-        x0;
-        options = options.sub_options,
-        sub_kwargs...,
+        smodel, optimizer.sub_alg, x0; options=options.sub_options, sub_kwargs...
     )
     return BayesOptWorkspace(
         model,
@@ -1569,15 +1564,15 @@ function Workspace(
     )
 end
 
-function reset!(w::BayesOptWorkspace, x0 = nothing)
+function reset!(w::BayesOptWorkspace, x0=nothing)
     x0 === nothing || (w.x0 .= x0)
     smodel, surrogates = surrogate_model(w.model; w.options.nt...)
     checksubproblem!(
         smodel,
         w.sub_alg;
-        hint = "The surrogate subproblem has features that the sub-optimizer cannot handle.",
+        hint="The surrogate subproblem has features that the sub-optimizer cannot handle.",
     )
-    w.sub_workspace = Workspace(smodel, w.sub_alg, w.x0; options = w.options.sub_options)
+    w.sub_workspace = Workspace(smodel, w.sub_alg, w.x0; options=w.options.sub_options)
     w.surrogates = surrogates
     empty!(w.history)
     return w
