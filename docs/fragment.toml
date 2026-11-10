@@ -1,0 +1,55 @@
+name = "NonconvexBayesian"
+modules = ["NonconvexBayesian"]
+doctest_setup = "using NonconvexBayesian, NonconvexIpopt"
+
+[[pages]]
+title = "Introduction"
+file = "index.md"
+
+[[pages]]
+title = "Quick start"
+file = "quickstart.md"
+
+[[pages]]
+title = "Options"
+file = "options.md"
+
+[[pages]]
+title = "Acquisitions"
+file = "acquisitions.md"
+
+[[pages]]
+title = "Constraints"
+file = "constraints.md"
+
+[[pages]]
+title = "Theory"
+file = "theory.md"
+
+[[pages]]
+title = "Surrogates"
+  [[pages.children]]
+  title = "Zero-order surrogates"
+  file = "surrogates/zero_order.md"
+  [[pages.children]]
+  title = "First-order (gradient-enhanced) surrogates"
+  file = "surrogates/first_order.md"
+  [[pages.children]]
+  title = "Co-kriging surrogates"
+  file = "surrogates/co_kriging.md"
+
+[[pages]]
+title = "Trust regions"
+file = "trust_regions.md"
+
+[[pages]]
+title = "Solver capabilities"
+file = "capabilities.md"
+
+[[pages]]
+title = "Result"
+file = "result.md"
+
+[[pages]]
+title = "Docstrings"
+file = "docstrings.md"
