@@ -437,3 +437,84 @@ end
     @test_logs (:warn, r"gradient") s([1.0, 1.0])
     @test size(s.∇y[1], 1) == nrows  # the non-finite gradient was skipped
 end
+
+@testitem "Constraint surrogate transformations" begin
+    using NonconvexBayesian, NonconvexIpopt, Test, LinearAlgebra, AbstractGPs
+    using IntervalArithmetic
+    using NonconvexCore: tovecmodel
+
+    f(x::AbstractVector) = sqrt(x[2])
+    g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
+    h(x::AbstractVector) = [x[1] + x[2], x[1] - x[2]]  # 2-dim expensive equality
+
+    m = Model()
+    set_objective!(m, f, flags=[:expensive])
+    addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+    add_eq_constraint!(m, x -> sum(x) - 1, flags=[:expensive])   # dim-1 expensive eq
+    add_eq_constraint!(m, h, flags=[:expensive])                 # dim-2 expensive eq
+    add_eq_constraint!(m, x -> x[1] - x[2])                      # cheap eq
+    add_ineq_constraint!(m, x -> g(x, 2, 0), flags=[:expensive]) # expensive ineq
+    add_ineq_constraint!(m, x -> g(x, -1, 1))                    # cheap ineq
+    add_sd_constraint!(m, x -> Matrix{Float64}(I, 2, 2))
+    vm, x0, _ = tovecmodel(m, [1.234, 2.345])
+    sm, surrogates = NonconvexBayesian.surrogate_model(vm)
+
+    # The objective is replaced by a get_lo-wrapped surrogate; its flags and
+    # multiplier are preserved.
+    @test :expensive in sm.objective.flags
+    @test sm.objective.multiple == vm.objective.multiple
+    @test isfinite(sm.objective(x0))
+
+    # Cheap equality constraints pass through; expensive ones are removed.
+    @test length(sm.eq_constraints.fs) == 1
+
+    # Inequalities: the cheap ineq, the expensive ineq (dim 1) and the two
+    # expensive equalities, each converted to one 2-block ineq of twice the
+    # dimension (dim 1 -> 2, dim 2 -> 4), all with zeroed right-hand sides.
+    @test length(sm.ineq_constraints.fs) == 1 + 1 + 2
+    @test sort([c.dim for c in sm.ineq_constraints.fs]) == [1, 1, 2, 4]
+    @test all(c -> all(iszero, c.rhs), sm.ineq_constraints.fs)
+
+    # Semidefinite constraints, bounds, init and integer flags pass through.
+    @test length(sm.sd_constraints.fs) == 1
+    @test sm.box_min == vm.box_min && sm.box_max == vm.box_max
+    @test sm.init == vm.init && sm.integer == vm.integer
+
+    # One surrogate per expensive function (objective + 2 eqs + 1 ineq).
+    @test length(surrogates) == 4
+    @test all(s -> s isa NonconvexBayesian.ZeroOrderGPSurrogate, surrogates)
+
+    # first_order and co_kriging variants build the matching surrogate kinds,
+    # including for the constraint functions.
+    _, surr_fo = NonconvexBayesian.surrogate_model(vm; first_order=true)
+    @test all(s -> s isa NonconvexBayesian.FirstOrderGPSurrogate, surr_fo)
+    _, surr_ck = NonconvexBayesian.surrogate_model(vm; co_kriging=true)
+    @test all(s -> s isa NonconvexBayesian.CoKrigingSurrogate, surr_ck)
+
+    # _equality_f value semantics: the 2-block transformation [lo; -hi] of
+    # the interval output.
+    s = NonconvexBayesian.surrogate(h, x0)
+    s.mode = :exact
+    s([1.5, 2.0])
+    s([0.8, 1.2])
+    s.mode = :interval
+    t = s([1.0, 1.5])
+    v = NonconvexBayesian._equality_f(s)([1.0, 1.5])
+    @test v ≈ [inf.(t); .-sup.(t)]
+    @test v ≈ [
+        NonconvexBayesian.get_lo.(t);
+        NonconvexBayesian.get_lo.(NonconvexBayesian._neg_interval.(t))
+    ]
+
+    # Constraint LCB semantics: the surrogate lower bound is conservative
+    # (at most the posterior mean).
+    si = NonconvexBayesian.surrogate(x -> g(x, 2, 0), x0)
+    si.mode = :exact
+    si([1.5, 2.0])
+    si([0.8, 1.2])
+    si.mode = :interval
+    si([1.0, 1.5])
+    lo = NonconvexBayesian._lower_f(si)([1.0, 1.5])
+    @test lo == NonconvexBayesian.get_lo(si([1.0, 1.5]))
+    @test lo <= AbstractGPs.mean(si.cache.posterior[1], [[1.0, 1.5]])[1]
+end

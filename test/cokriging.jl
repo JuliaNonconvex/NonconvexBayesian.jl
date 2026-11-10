@@ -191,3 +191,31 @@ end
     @test abs(r2.minimum - sqrt(8 / 27)) < 1e-3
     @test norm(r2.minimizer - [1 / 3, 8 / 27]) < 1e-3
 end
+
+@testitem "Co-kriging BO with an expensive equality constraint" begin
+    using NonconvexBayesian, NonconvexIpopt, Test, LinearAlgebra
+
+    f(x::AbstractVector) = sqrt(x[2])
+    g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
+
+    m = Model()
+    set_objective!(m, f, flags=[:expensive])
+    addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+    add_ineq_constraint!(m, x -> g(x, 2, 0))
+    add_ineq_constraint!(m, x -> g(x, -1, 1))
+    add_eq_constraint!(m, x -> sum(x) - 1 / 3 - 8 / 27, flags=[:expensive])
+    alg = BayesOptAlg(IpoptAlg())
+    options = BayesOptOptions(
+        sub_options=IpoptOptions(print_level=0),
+        maxiter=20,
+        ctol=1e-4,
+        ninit=5,
+        postoptimize=true,
+        fit_prior=false,
+        co_kriging=true,
+        grad_source=:forwarddiff,
+    )
+    r = optimize(m, alg, [1.234, 2.345], options=options)
+    @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
+    @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
+end

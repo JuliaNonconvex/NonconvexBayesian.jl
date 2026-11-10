@@ -31,3 +31,13 @@ points (robust to observation noise).
 
 Constraint surrogates always use `LCB(std_multiple)`: feasibility calls for a
 conservative lower bound regardless of the objective acquisition.
+
+## The acquisition interface
+
+[`AbstractAcquisition`](@ref) is the supertype of all acquisitions
+([`LCB`](@ref), [`GPUCB`](@ref), [`EI`](@ref), [`PI`](@ref)). An
+acquisition is a callable: `acq(s)` returns the acquisition interval
+(`[μ - ησ, μ + ησ]`, or a degenerate interval for EI/PI) at the current
+posterior of a surrogate `s`, so it plugs into both
+`BayesOptOptions(acquisition = ...)` and the surrogate constructors
+`surrogate(f, x0; acquisition = ...)`.

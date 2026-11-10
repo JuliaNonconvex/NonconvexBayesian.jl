@@ -23,6 +23,9 @@ and is also built standalone.
 - Direct-Sobol or acquisition-based initialization, acquisition multistart
   with duplicate-point filtering, and TuRBO-style local trust-region
   restarts for high-dimensional problems.
+- Expensive constraints replaced by conservative (LCB) surrogates, with
+  equality constraints transformed into 2-block inequalities (see
+  [Constraints](constraints.md)).
 - Full protocol integration: `GenericResult`-style results with `fcalls`,
   convergence state, callbacks, `verbose` logging, `keep_all` query
   trajectories and `reset!` support for meta-algorithm nesting.

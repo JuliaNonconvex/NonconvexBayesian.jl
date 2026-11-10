@@ -19,6 +19,10 @@ title = "Acquisitions"
 file = "acquisitions.md"
 
 [[pages]]
+title = "Constraints"
+file = "constraints.md"
+
+[[pages]]
 title = "Theory"
 file = "theory.md"
 

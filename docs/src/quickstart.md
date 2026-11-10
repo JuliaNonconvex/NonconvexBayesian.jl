@@ -22,7 +22,8 @@ r = optimize(model, alg, [1.234, 2.345], options = options)
 
 The `flags = [:expensive]` hint marks the functions that should be replaced
 by surrogates; the remaining functions are kept and modeled natively by the
-sub-optimizer. Each iteration of the BO loop
+sub-optimizer (see [Constraints](constraints.md) for how expensive equality
+and inequality constraints are transformed). Each iteration of the BO loop
 
 1. solves the surrogate model (the acquisition) with the sub-optimizer,
 2. evaluates the true expensive functions at the proposed point, and

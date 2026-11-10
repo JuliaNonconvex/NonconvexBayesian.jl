@@ -24,3 +24,18 @@ A `callback` passed to `optimize` is invoked once per BO iteration with a
 `Solution` carrying the candidate, the objective value, the constraint
 violations and the convergence state. `verbose = true` logs one line per
 iteration.
+
+## Workspace
+
+The [`BayesOptWorkspace`](@ref) underlying an optimization keeps the
+original model, the surrogate sub-workspace, the surrogates, the callback
+and the query history. It is created by the standard `NonconvexCore`
+`Workspace` protocol and supports `reset!`:
+
+```julia
+w = Workspace(m, BayesOptAlg(IpoptAlg()), x0, options = options)
+NonconvexCore.reset!(w)   # rebuild the surrogates from scratch
+```
+
+This makes the workspace reusable and nestable in other meta-algorithms
+(such as multistart drivers).
