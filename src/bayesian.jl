@@ -156,8 +156,7 @@ Keyword arguments:
 - `fit_bounds = nothing`: optional `(lb = ..., ub = ...)` bounds (scalars or
   vectors) on the hyperparameters,
 - `fit_optimizer = nothing`: optional `(alg, options)` tuple used for the
-  hyperparameter optimization; defaults to Ipopt via the
-  `NonconvexBayesianIpoptExt` extension.
+  hyperparameter optimization; defaults to Ipopt.
 """
 mutable struct ZeroOrderGPSurrogate <: AbstractGPSurrogate
     f::Function
@@ -491,34 +490,22 @@ function _expand_to(v, n)
         fill(Float64(v), n)
     else
         (
-        if length(v) == n
-            collect(Float64, v)
-        else
-            throw(
-            ArgumentError(
-                "fit_bounds entries must be scalars or vectors of length $n (got $(length(v))).",
-            ),
+            if length(v) == n
+                collect(Float64, v)
+            else
+                throw(
+                    ArgumentError(
+                        "fit_bounds entries must be scalars or vectors of length $n (got $(length(v))).",
+                    ),
+                )
+            end
         )
-        end
-    )
     end
 end
 
-# Sentinel so that the NonconvexBayesianIpoptExt extension can *add* a more
-# specific method for the default hyperparameter optimizer (extensions cannot
-# overwrite existing methods).
-struct NoFitOptimizer end
-
 _fit_algorithm(fit_optimizer::Tuple, fit_max_iter) = fit_optimizer
-_fit_algorithm(::Nothing, fit_max_iter) = _fit_algorithm(NoFitOptimizer(), fit_max_iter)
-
-# Fallback: overridden by the more specific NonconvexBayesianIpoptExt method.
-function _fit_algorithm(fit_optimizer, fit_max_iter)
-    return error(
-        "NonconvexBayesian needs a hyperparameter-optimization solver. Load " *
-        "NonconvexIpopt (`using NonconvexIpopt`) or pass `fit_optimizer = (alg, options)` " *
-        "to the surrogate or to `BayesOptOptions`.",
-    )
+function _fit_algorithm(::Nothing, fit_max_iter)
+    return (IpoptAlg(), IpoptOptions(; max_iter=fit_max_iter, print_level=0))
 end
 
 # Convert the surrogate's observation-major storage (`y[obs]` is the vector of
@@ -1041,8 +1028,7 @@ Options of the [`BayesOptAlg`](@ref) Bayesian-optimization loop. `sub_options`
 - `fit_prior = true`, `fit_noise = false`, `every = 2`, `skip = 2`,
   `last = :all`: hyperparameter refit control.
 - `fit_max_iter = 20`, `fit_bounds = nothing`, `fit_optimizer = nothing`:
-  the hyperparameter optimizer (defaults to Ipopt via the
-  `NonconvexBayesianIpoptExt` extension).
+  the hyperparameter optimizer (defaults to Ipopt).
 """
 function BayesOptOptions(;
     sub_options,

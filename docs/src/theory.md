@@ -60,9 +60,8 @@ log p(y | X, θ) = -½ (y - μ₀)ᵀ (K + n²I)⁻¹ (y - μ₀)
                   - ½ log det(K + n²I) - (N/2) log 2π.
 ```
 
-The optimization runs with a small budget (Ipopt by default, via the
-`NonconvexBayesianIpoptExt` extension, or any solver passed as
-`fit_optimizer`) and is guarded against non-positive-definite trial
+The optimization runs with a small budget (Ipopt by default, or any solver
+passed as `fit_optimizer`) and is guarded against non-positive-definite trial
 covariances (a relative jitter keeps the Cholesky factorization valid).
 Refits are scheduled by `every`/`skip`/`last` and warm-started from the
 current hyperparameters.

@@ -1,6 +1,19 @@
-using JET, NonconvexBayesian
-
-# Run JET analysis on the NonconvexBayesian package.
-# Start with a permissive config to catch obvious issues without
-# blocking CI on known type-instabilities or missing methods.
-JET.test_package(NonconvexBayesian; target_modules=(NonconvexBayesian,))
+@testitem "JET" begin
+    using NonconvexBayesian, Test
+    # JET 0.13's `report_package` corrupts the loaded method tables on
+    # Julia 1.13 (its virtual top-level replay re-evaluates `@params`
+    # definitions in the running process), so analyze in a fresh subprocess
+    # to keep the test process intact for the remaining testitems.
+    julia = joinpath(Sys.BINDIR, Base.julia_exename())
+    project = dirname(Base.active_project())
+    code =
+        "using JET, NonconvexBayesian\n" *
+        "JET.test_package(NonconvexBayesian; target_modules=(NonconvexBayesian,))"
+    @test success(
+        pipeline(
+            `$julia --startup-file=no --project=$project -e $code`;
+            stdout=devnull,
+            stderr=devnull,
+        ),
+    )
+end

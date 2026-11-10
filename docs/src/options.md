@@ -44,7 +44,7 @@ options = BayesOptOptions(
     fit_bounds = nothing,           # (lb = ..., ub = ...) hyperparameter
                                     # bounds
     fit_optimizer = nothing,        # (alg, options) for the MLE; defaults
-                                    # to Ipopt via the extension
+                                    # to Ipopt
 )
 ```
 

@@ -17,12 +17,6 @@ Sobol = "ed01d8cd-4d21-5b2a-85b4-cc3bdc58bad4"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
-[weakdeps]
-NonconvexIpopt = "bf347577-a06d-49ad-a669-8c0e005493b8"
-
-[extensions]
-NonconvexBayesianIpoptExt = "NonconvexIpopt"
-
 [compat]
 AbstractGPs = "0.3, 0.4, 0.5"
 ChainRulesCore = "0.10, 1"
@@ -30,26 +24,22 @@ ForwardDiff = "0.10"
 IntervalArithmetic = "0.17, 0.18, 0.19, 0.20, 0.21, 0.22, 0.23, 1"
 LinearAlgebra = "1"
 NonconvexCore = "2"
-NonconvexIpopt = "0.5, 0.6, 0.7"
+NonconvexIpopt = "0.5, 0.6, 0.7, 0.8"
 Parameters = "0.12, 0.13"
 Reexport = "1"
 Sobol = "1"
 SpecialFunctions = "0.10, 1, 2"
 Statistics = "1"
-Aqua = "0.8, 0.9"
-JET = "0.8, 0.9, 0.10, 0.11, 0.12"
-JSON = "1"
 Test = "1"
-Zygote = "0.6, 0.7"
+TestItemRunner = "0.1, 0.2, 1"
+TestItems = "0.1, 1"
 julia = "1.10"
 
 [extras]
-Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
-JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
-JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 NonconvexIpopt = "bf347577-a06d-49ad-a669-8c0e005493b8"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
+TestItemRunner = "f8b46487-2199-4994-9208-9a1283c18c0a"
+TestItems = "1c621080-faea-4a02-84b6-bbd5e436b8fe"
 
 [targets]
-test = ["Aqua", "JET", "JSON", "NonconvexIpopt", "Test", "Zygote"]
+test = ["NonconvexIpopt", "Test", "TestItemRunner", "TestItems"]

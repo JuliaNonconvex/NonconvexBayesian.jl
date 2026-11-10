@@ -22,9 +22,7 @@ for arg in ARGS
 end
 
 # Run JET analysis
-report = JET.report_package(
-    NonconvexBayesian; target_modules=(NonconvexBayesian,)
-)
+report = JET.report_package(NonconvexBayesian; target_modules=(NonconvexBayesian,))
 
 # Restrict the report to issues that originate in NonconvexBayesian's
 # own source. `report_package` also analyzes the dependency closure,

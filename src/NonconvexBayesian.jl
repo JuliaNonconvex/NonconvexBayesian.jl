@@ -21,6 +21,7 @@ export BayesOptOptions,
     get_lo
 
 using Reexport, AbstractGPs, IntervalArithmetic, Parameters
+using NonconvexIpopt: IpoptAlg, IpoptOptions
 using Sobol, ChainRulesCore
 @reexport using NonconvexCore
 using NonconvexCore: VecModel, AbstractResult, AbstractOptimizer, getinit

@@ -1,4 +1,4 @@
-using Aqua, NonconvexBayesian
-
-# All Aqua quality gates are enabled. No tests are skipped.
-Aqua.test_all(NonconvexBayesian)
+@testitem "Aqua" begin
+    using Aqua, NonconvexBayesian
+    Aqua.test_all(NonconvexBayesian)
+end

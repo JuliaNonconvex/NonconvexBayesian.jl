@@ -1,12 +1,12 @@
 # NEWS
 
-## 0.2.0
+## 0.3.0
 
 ### Breaking changes
 
 - `BayesOptOptions` now requires `sub_options` (it no longer defaults to
-  Ipopt options, since NonconvexIpopt is now a weak dependency). Requires
-  NonconvexCore 2.
+  Ipopt options). Requires NonconvexCore 2; NonconvexIpopt is a regular
+  dependency (the package extension was removed).
 - `BayesOptResult` now carries the `GenericResult`-style fields
   (`optimizer`, `initial_x`, `iter`, `maxiter_reached`, `tol`, `convstate`,
   `fcalls`) alongside `sub_result`, `surrogates` and `trajectory`.
@@ -50,9 +50,8 @@
 
 ### Maintenance
 
-- NonconvexIpopt demoted to a weak dependency; the
-  `NonconvexBayesianIpoptExt` extension provides the default
-  hyperparameter optimizer (load NonconvexIpopt or pass `fit_optimizer`).
+- The hyperparameter optimizer defaults to Ipopt (`fit_optimizer` overrides
+  it).
 - DocumenterFragments documentation (`docs/`) covering the options,
   acquisitions, zero- and first-order surrogates, trust regions, capabilities
   and the result; built standalone and as a fragment of the Nonconvex docs.
