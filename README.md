@@ -1,6 +1,9 @@
+<p align="center">
+  <img src="assets/logo.png" width="400" alt="NonconvexBayesian.jl logo">
+</p>
+
 # NonconvexBayesian
 
-<img src="https://raw.githubusercontent.com/JuliaNonconvex/NonconvexBayesian.jl/master/docs/src/assets/logo.png" width="120" align="right"/>
 
 [![Documentation (stable)](https://img.shields.io/badge/docs-stable-blue.svg)](https://julianonconvex.github.io/NonconvexBayesian.jl/stable)
 [![Documentation (dev)](https://img.shields.io/badge/docs-dev-blue.svg)](https://julianonconvex.github.io/NonconvexBayesian.jl/dev)
