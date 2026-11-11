@@ -1,5 +1,14 @@
 # NEWS
 
+## 0.2.1
+
+- Deterministic and reproducible test runs: the runtests prelude pins BLAS
+  to a single thread and seeds the global RNG; a new Reproducibility
+  testitem asserts identical results across runs.
+- The Expensive block constraint testitem uses postoptimize so its
+  assertions no longer depend on the nonconvex hyperparameter-MLE
+  trajectory across machines.
+
 ## 0.3.0
 
 ### Breaking changes
