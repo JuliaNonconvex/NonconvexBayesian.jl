@@ -1,6 +1,12 @@
 # NonconvexBayesian
 
-![JuliaNonconvex logo](https://raw.githubusercontent.com/JuliaNonconvex/NonconvexBayesian.jl/master/docs/src/assets/logo.png)
+```@raw html
+<p align="center">
+  <img src="https://raw.githubusercontent.com/JuliaNonconvex/NonconvexBayesian.jl/master/docs/src/assets/logo.png" alt="JuliaNonconvex logo" width="180"/>
+</p>
+```
+
+
 
 `NonconvexBayesian` provides Gaussian-process surrogate-assisted (Bayesian)
 optimization for the Nonconvex ecosystem. Expensive objective and constraint
