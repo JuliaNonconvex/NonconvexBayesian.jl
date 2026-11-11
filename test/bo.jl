@@ -266,6 +266,9 @@ end
     f(x::AbstractVector) = sqrt(x[2])
     g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
 
+    # The hyperparameter MLE is nonconvex, so its basin can differ across
+    # machines; postoptimize polishes the incumbent on the exact model so
+    # the assertions do not depend on the MLE trajectory.
     @testset "Fit prior: $fit_prior" for fit_prior in (true, false)
         m = Model()
         set_objective!(m, f)
@@ -278,7 +281,7 @@ end
             ctol=1e-4,
             ninit=5,
             initialize=true,
-            postoptimize=false,
+            postoptimize=true,
             skip=2,
             every=2,
             last=10,
@@ -897,4 +900,35 @@ end
     r = optimize(m, alg, [1.234, 2.345], options=options)
     @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
     @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-3
+end
+
+@testitem "Reproducibility" begin
+    using NonconvexBayesian, NonconvexIpopt, Test, LinearAlgebra
+
+    # Two identical runs must produce identical results: the algorithm draws
+    # no random numbers (deterministic Sobol sequences only).
+    f(x::AbstractVector) = sqrt(x[2])
+    g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
+
+    function run_once()
+        m = Model()
+        set_objective!(m, f, flags=[:expensive])
+        addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+        add_ineq_constraint!(m, x -> g(x, 2, 0))
+        add_ineq_constraint!(m, x -> g(x, -1, 1))
+        options = BayesOptOptions(
+            sub_options=IpoptOptions(print_level=0),
+            maxiter=8,
+            ninit=3,
+            postoptimize=false,
+            fit_prior=false,
+        )
+        return optimize(m, BayesOptAlg(IpoptAlg()), [1.234, 2.345], options=options)
+    end
+
+    r1 = run_once()
+    r2 = run_once()
+    @test r1.minimum == r2.minimum
+    @test r1.minimizer == r2.minimizer
+    @test r1.fcalls == r2.fcalls
 end
