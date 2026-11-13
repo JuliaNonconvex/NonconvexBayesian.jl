@@ -82,6 +82,30 @@ using Zygote: Zygote
     )
 end
 
+@testitem "Co-kriging posterior centers by the constant prior mean" begin
+    using NonconvexBayesian, AbstractGPs, Test, LinearAlgebra
+
+    # Regression: the posterior mean must center the value observations by
+    # the constant prior mean μ0 (`μ0 + k*ᵀ(K+Λ)⁻¹(z − μ0·1_N)`); the old
+    # uncentered form was biased by μ0·k*ᵀA⁻¹1_N for any nonzero μ0.
+    k = SqExponentialKernel()
+    X = [[0.0, 0.0], [1.0, 0.0]]
+    y = [3.0, 4.0]          # f(x) = 3 + x₁²
+    ∇y = [0.0 0.0; 2.0 0.0] # ∇f = [2x₁, 0]
+    pg = NonconvexBayesian.CoKrigingPosterior(k, 3.0, X, y, ∇y, 1e-8, 1e-8)
+    xt = [0.5, 0.0]
+    m = AbstractGPs.mean(pg, xt)
+    # A reasonable prediction (the uncentered form was biased to ≈ 6.19 here,
+    # nearly twice the true 3.25).
+    @test abs(m - 3.25) < 0.2
+    # Reference computation through the stored factor: centered observations.
+    N, n = 2, 2
+    z = NonconvexBayesian._joint_observations(pg.zv, pg.Z∇)
+    zc = vcat(fill(3.0, N), zeros(N * n))
+    mref = 3.0 + dot(NonconvexBayesian._joint_kstar(pg, xt), pg.L \ (z - zc))
+    @test m ≈ mref rtol = 1e-8
+end
+
 @testitem "Co-kriging MLE" begin
     using NonconvexBayesian, AbstractGPs, Test, LinearAlgebra
     using ForwardDiff

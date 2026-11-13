@@ -88,6 +88,15 @@ end
     r0 = NonconvexBayesian.get_lo(d0)
     @test ForwardDiff.value(r0) == 1.0
     @test ForwardDiff.partials(r0, 1) ≈ 0.0
+
+    # get_lo preserves the input dual's tag instead of constructing a
+    # Dual{Nothing}.
+    T = ForwardDiff.Tag(sin, Float64)
+    dt = ForwardDiff.Dual{T}(interval(1.0, 2.0), (1.0,))
+    rt = NonconvexBayesian.get_lo(dt)
+    @test ForwardDiff.tagtype(rt) === T
+    @test ForwardDiff.value(rt) == 1.0
+    @test ForwardDiff.partials(rt, 1) ≈ 1.0
 end
 
 @testitem "Surrogate cache and non-finite observations" begin
@@ -428,14 +437,60 @@ end
     using NonconvexBayesian, Test
 
     # The constructor records the finite gradient at x0; the non-finite
-    # gradient at a later observation is skipped with a warning.
+    # gradient at a later observation is skipped with a warning. The whole
+    # observation (value AND gradient) is skipped so that the value rows and
+    # the gradient rows stay aligned (the gradient GPs and the co-kriging
+    # posterior assume one gradient row per observation).
     s = NonconvexBayesian.first_order_surrogate(
         x -> x[1] + x[2], [0.0, 0.0]; grad_source=x -> x[1] > 0.5 ? [Inf, 1.0] : [1.0, 1.0]
     )
     nrows = size(s.∇y[1], 1)
+    nx = length(s.X)
     s.mode = :exact
     @test_logs (:warn, r"gradient") s([1.0, 1.0])
     @test size(s.∇y[1], 1) == nrows  # the non-finite gradient was skipped
+    @test length(s.X) == nx          # X and ∇y stay aligned
+    # Interval-mode predictions after the skip do not crash.
+    s.mode = :interval
+    @test isfinite(NonconvexBayesian.get_lo(s([0.5, 0.5])))
+    g = NonconvexBayesian._mean_gradient(s, s.cache.posterior[1], 1, [0.5, 0.5])
+    @test length(g) == 2
+
+    # Same alignment invariant for the co-kriging surrogate.
+    sk = NonconvexBayesian.co_kriging_surrogate(
+        x -> x[1] + x[2], [0.0, 0.0]; grad_source=x -> x[1] > 0.5 ? [Inf, 1.0] : [1.0, 1.0]
+    )
+    nk = length(sk.X)
+    sk.mode = :exact
+    @test_logs (:warn, r"gradient") sk([1.0, 1.0])
+    @test length(sk.X) == nk
+    sk.mode = :interval
+    @test isfinite(NonconvexBayesian.get_lo(sk([0.5, 0.5])))
+end
+
+@testitem "Exact-mode pullback reuses recorded observations" begin
+    using NonconvexBayesian, Test
+    using IntervalArithmetic
+    using ChainRulesCore: ChainRulesCore
+
+    # The exact-mode pullback must not re-evaluate the expensive function:
+    # the forward pass already recorded the value (and, for gradient-enhanced
+    # surrogates, the gradient) at the primal point.
+    cnt = Ref(0)
+    fg(x) = (cnt[] += 1; x[1]^2 + x[2]^2)
+    ∇g(x) = [2x[1], 2x[2]]
+    s = NonconvexBayesian.FirstOrderGPSurrogate(
+        fg, [0.5, 0.5]; mode=:exact, fit_prior=false, grad_source=∇g
+    )
+    s([0.6, 0.6])  # record one observation
+    c0 = cnt[]
+    _, pb = ChainRulesCore.rrule(s, [0.6, 0.6])  # primal call records once more
+    g = pb(interval(0.5, 0.5))[2]  # (lo+hi)=1.0 → the gradient itself
+    @test g ≈ [1.2, 1.2] rtol = 1e-6
+    # Only the primal observation is a new evaluation; the pullback itself
+    # reuses the recorded value and gradient (the old implementation
+    # re-evaluated f plus an entire ForwardDiff gradient).
+    @test cnt[] == c0 + 1
 end
 
 @testitem "Constraint surrogate transformations" begin

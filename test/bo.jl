@@ -766,15 +766,21 @@ end
     # TuRBO success/failure rule.
     L_init = [0.8, 0.8]
     L_min = [0.05, 0.05]
-    # Consecutive improvements double the region, capped at L_init.
+    # A success below τ_success does not grow the region (the counter counts).
+    L, restart, s, f = NonconvexBayesian._update_tr(
+        [0.1, 0.1], true, 1, 0, 3, 4, L_init, L_min
+    )
+    @test L == [0.1, 0.1] && !restart && s == 2 && f == 0
+    # τ_success consecutive improvements double the region (capped at L_init)
+    # and reset the success counter.
     L, restart, s, f = NonconvexBayesian._update_tr(
         [0.1, 0.1], true, 2, 0, 3, 4, L_init, L_min
     )
-    @test L == [0.2, 0.2] && !restart && s == 3 && f == 0
+    @test L == [0.2, 0.2] && !restart && s == 0 && f == 0
     L, restart, s, f = NonconvexBayesian._update_tr(
         [0.4, 0.4], true, 2, 0, 3, 4, L_init, L_min
     )
-    @test L == L_init && !restart && s == 3 && f == 0
+    @test L == L_init && !restart && s == 0 && f == 0
     # Failures reset the success counter...
     L, restart, s, f = NonconvexBayesian._update_tr(
         [0.4, 0.4], false, 3, 0, 3, 4, L_init, L_min
@@ -817,6 +823,9 @@ end
     r = optimize(m, alg, [1.234, 2.345], options=options)
     @test abs(r.minimum - sqrt(8 / 27)) < 1e-3
     @test r.n_restarts >= 0
+    # The trust-region boxing must not mutate the user's model bounds.
+    @test getmin(m) == [1e-4, 1e-4]
+    @test getmax(m) == [10.0, 10.0]
 
     # A linear objective with a tight trust region forces a deterministic
     # restart once improvements stall at the boundary.
@@ -871,6 +880,9 @@ end
     )
     @test_throws ErrorException BayesOptOptions(
         sub_options=IpoptOptions(), tr_success_max=0
+    )
+    @test_throws ErrorException BayesOptOptions(
+        sub_options=IpoptOptions(), tr_fail_max=0
     )
 end
 
