@@ -881,9 +881,7 @@ end
     @test_throws ErrorException BayesOptOptions(
         sub_options=IpoptOptions(), tr_success_max=0
     )
-    @test_throws ErrorException BayesOptOptions(
-        sub_options=IpoptOptions(), tr_fail_max=0
-    )
+    @test_throws ErrorException BayesOptOptions(sub_options=IpoptOptions(), tr_fail_max=0)
 end
 
 @testitem "First-order BO with an expensive equality constraint" begin

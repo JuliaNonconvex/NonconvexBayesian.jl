@@ -631,9 +631,9 @@ end
 # schedule (and not deferred, e.g. while a sub-solve is active).
 function _pending_fit(s::AbstractGPSurrogate)
     return s.fit_prior &&
-        !s.defer_fit &&
-        s.counter > s.skip * s.every &&
-        (s.counter % s.every) == 0
+           !s.defer_fit &&
+           s.counter > s.skip * s.every &&
+           (s.counter % s.every) == 0
 end
 
 function _predict(s::AbstractGPSurrogate, x)
@@ -1563,7 +1563,7 @@ function optimize!(workspace::BayesOptWorkspace)
         finally
             foreach(surrogates) do s
                 s.mode = :interval
-                s.defer_fit = false
+                return s.defer_fit = false
             end
         end
         # Run any refits that became due while the sub-solve was active.
