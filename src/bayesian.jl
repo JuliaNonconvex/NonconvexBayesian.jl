@@ -177,6 +177,10 @@ mutable struct ZeroOrderGPSurrogate <: AbstractGPSurrogate
     fit_optimizer::Any
     counter::Int
     cache::PosteriorCache
+    # Whether hyperparameter refits triggered by `_observe!` are deferred
+    # (used while a sub-solve is active, e.g. during `postoptimize`, so that
+    # the refit's own optimizer solve never nests inside the sub-solver).
+    defer_fit::Bool
 end
 function ZeroOrderGPSurrogate(
     f,
@@ -219,6 +223,7 @@ function ZeroOrderGPSurrogate(
         fit_optimizer,
         0,
         (posterior=nothing, dirty=true),
+        false,
     )
 end
 
@@ -274,6 +279,7 @@ mutable struct FirstOrderGPSurrogate <: AbstractGPSurrogate
     counter::Int
     cache::PosteriorCache
     ∇cache::PosteriorCache
+    defer_fit::Bool
 end
 function FirstOrderGPSurrogate(
     f,
@@ -327,11 +333,16 @@ function FirstOrderGPSurrogate(
         0,
         (posterior=nothing, dirty=true),
         (posterior=nothing, dirty=true),
+        false,
     )
     if grad_source !== :none
         ∇ = _grad_observation(s, x)
-        for i in 1:N
-            s.∇y[i] = vcat(s.∇y[i], ∇[i:i, :])
+        if all(isfinite, ∇)
+            for i in 1:N
+                s.∇y[i] = vcat(s.∇y[i], ∇[i:i, :])
+            end
+        else
+            @warn "Skipping non-finite initial gradient observation." maxlog = 10
         end
     end
     return s
@@ -587,27 +598,42 @@ function _observe!(s::AbstractGPSurrogate, x)
         @warn "Skipping non-finite surrogate observation." maxlog = 10
         return y isa Real ? nai() : map(_ -> nai(), y)
     end
+    ∇ = nothing
+    if _records_gradients(s) && s.grad_source !== :none
+        ∇ = _grad_observation(s, x)
+        if !all(isfinite, ∇)
+            # The value and gradient observation rows must stay aligned: the
+            # gradient GPs and the co-kriging posterior assume one gradient
+            # row per observation, so the whole observation is skipped.
+            @warn "Skipping surrogate observation with a non-finite gradient." maxlog = 10
+            return interval.(y, y)
+        end
+    end
     s.X = vcat(s.X, [x])
     s.y = vcat(s.y, [y])
     set_cache!(s, (posterior=s.cache.posterior, dirty=true))
-    if _records_gradients(s) && s.grad_source !== :none
-        ∇ = _grad_observation(s, x)
-        if all(isfinite, ∇)
-            for i in 1:s.N
-                s.∇y[i] = vcat(s.∇y[i], ∇[i:i, :])
-            end
-            if s isa FirstOrderGPSurrogate
-                set_∇cache!(s, (posterior=s.∇cache.posterior, dirty=true))
-            end
-        else
-            @warn "Skipping non-finite gradient observation." maxlog = 10
+    if ∇ !== nothing
+        for i in 1:s.N
+            s.∇y[i] = vcat(s.∇y[i], ∇[i:i, :])
+        end
+        if s isa FirstOrderGPSurrogate
+            set_∇cache!(s, (posterior=s.∇cache.posterior, dirty=true))
         end
     end
     s.counter += 1
-    if s.fit_prior && s.counter > s.skip * s.every && (s.counter % s.every) == 0
+    if _pending_fit(s)
         fit_mle!(s)
     end
     return interval.(y, y)
+end
+
+# Whether a hyperparameter refit is due according to the `every`/`skip`
+# schedule (and not deferred, e.g. while a sub-solve is active).
+function _pending_fit(s::AbstractGPSurrogate)
+    return s.fit_prior &&
+           !s.defer_fit &&
+           s.counter > s.skip * s.every &&
+           (s.counter % s.every) == 0
 end
 
 function _predict(s::AbstractGPSurrogate, x)
@@ -710,16 +736,40 @@ function _call_gp_grad(s, pg, i, x, Δ)
     end
 end
 
+# The value recorded at the primal point `x` by the most recent exact-mode
+# evaluation, or `nothing` when `x` was not just recorded (e.g. the
+# observation was skipped because it was non-finite).
+function _last_observed_value(s::AbstractGPSurrogate, x)
+    (!isempty(s.X) && s.X[end] == x) || return nothing
+    return eltype(s.y) <: Real ? s.y[end] : collect(s.y[end])
+end
+
+# The gradient observation (one row per output) recorded at the primal point
+# `x`, or `nothing` when unavailable (no gradient recording, `grad_source =
+# :none`, or `x` was not just recorded).
+function _last_observed_jacobian(s::AbstractGPSurrogate, x)
+    _records_gradients(s) || return nothing
+    s.grad_source === :none && return nothing
+    (!isempty(s.X) && s.X[end] == x) || return nothing
+    all(y -> size(y, 1) == length(s.X), s.∇y) || return nothing
+    return reduce(vcat, (reshape(s.∇y[i][end, :], 1, :) for i in 1:s.N))
+end
+
 function ChainRulesCore.rrule(s::AbstractGPSurrogate, x::AbstractVector)
     y = s(x)
     function surrogate_pullback(Δ)
         if s.mode == :exact
-            yv = s.f(x)
+            # The forward pass recorded the observation at `x`; reuse it (and
+            # its recorded gradient when available) instead of re-evaluating
+            # the expensive function.
+            yv = _last_observed_value(s, x)
+            J = _last_observed_jacobian(s, x)
+            yv === nothing && (yv = s.f(x))
             if yv isa Real
-                gy = ForwardDiff.gradient(s.f, x)
+                gy = J === nothing ? ForwardDiff.gradient(s.f, x) : vec(J)
                 return ChainRulesCore.NoTangent(), _perturbation_sum(Δ) .* gy
             else
-                J = ForwardDiff.jacobian(s.f, x)
+                J === nothing && (J = ForwardDiff.jacobian(s.f, x))
                 Δv = _perturbation_sum.(Δ)
                 return ChainRulesCore.NoTangent(), J' * Δv
             end
@@ -815,17 +865,19 @@ function ChainRulesCore.rrule(::typeof(_neg_interval), x::Interval)
     return _neg_interval(x), neg_interval_pullback
 end
 # Zygote's broadcast pullback seeds `ForwardDiff.Dual` values whose partials
-# are typed by the seeded value (an `Interval`); re-type them to the output
-# type so the broadcast machinery propagates scalar lower-bound perturbations.
+# are typed by the seeded value (an `Interval`); re-type the partials to
+# scalars so the broadcast machinery propagates lower-bound perturbations.
+# The input tag is preserved (never constructing `Dual{Nothing}`), and
+# non-interval partials (including nested duals) are passed through untouched.
 function get_lo(x::ForwardDiff.Dual)
     v = get_lo(ForwardDiff.value(x))
     p = ForwardDiff.partials(x)
     fp = ntuple(i -> _lo_seed(p[i]), length(p))
-    return ForwardDiff.Dual(v, fp)
+    return ForwardDiff.Dual{ForwardDiff.tagtype(x)}(v, fp)
 end
 get_lo(x::AbstractVector) = map(get_lo, x)
 get_lo(x::Real) = x
-_lo_seed(p) = p isa Interval ? Float64(inf(p)) : Float64(p)
+_lo_seed(p) = p isa Interval ? Float64(inf(p)) : p
 _lower_f(s) = get_lo ∘ s
 _equality_f(s) = x -> begin
     t = s(x)
@@ -940,8 +992,10 @@ function surrogate_model(
         eq_constraints,
         ineq_constraints,
         vecmodel.sd_constraints,
-        vecmodel.box_min,
-        vecmodel.box_max,
+        # Copied: the surrogate model's bounds may be re-boxed (e.g. by the
+        # TuRBO trust region), and the caller's model must not be affected.
+        copy(vecmodel.box_min),
+        copy(vecmodel.box_max),
         vecmodel.init,
         vecmodel.integer,
     ),
@@ -960,11 +1014,15 @@ function update_surrogates!(model, surrogates, x)
     foreach(surrogates) do s
         return s.mode = :exact
     end
-    o = model.objective(x)
-    i = model.ineq_constraints(x)
-    e = model.eq_constraints(x)
-    foreach(surrogates) do s
-        return s.mode = :interval
+    local o, i, e  # declared outside `try`: assignments inside try are not visible after it
+    try
+        o = model.objective(x)
+        i = model.ineq_constraints(x)
+        e = model.eq_constraints(x)
+    finally
+        foreach(surrogates) do s
+            return s.mode = :interval
+        end
     end
     return o, i, e
 end
@@ -1073,6 +1131,8 @@ function BayesOptOptions(;
     0 < tr_length_init <= 1 || error("tr_length_init must be in (0, 1].")
     0 < tr_min_factor < 1 || error("tr_min_factor must be in (0, 1).")
     tr_success_max >= 1 || error("tr_success_max must be at least 1.")
+    (tr_fail_max === nothing || tr_fail_max >= 1) ||
+        error("tr_fail_max must be at least 1 (or nothing).")
     return BayesOptOptions(
         sub_options,
         maxiter,
@@ -1130,6 +1190,7 @@ mutable struct BayesOptWorkspace{
     O<:BayesOptOptions,
     S2<:Union{Tuple,AbstractVector},
     C,
+    K<:NamedTuple,
 } <: Workspace
     model::M
     sub_workspace::S1
@@ -1140,6 +1201,9 @@ mutable struct BayesOptWorkspace{
     surrogates::S2
     callback::C
     history::Vector{Any}
+    # The sub-solver kwargs (without the meta-owned callback), kept so that
+    # re-boxed sub-workspaces (trust region) and `reset!` forward them.
+    sub_kwargs::K
 end
 
 """
@@ -1225,7 +1289,10 @@ function _update_tr(L, improved, success, failure, τ_success, τ_fail, L_init, 
     if improved
         success += 1
         failure = 0
-        L = min.(2 .* L, L_init)
+        if success >= τ_success
+            L = min.(2 .* L, L_init)
+            success = 0
+        end
         return L, false, success, failure
     else
         failure += 1
@@ -1271,49 +1338,70 @@ end
 # `nstarts` starts: the warm start plus `nstarts - 1` Sobol starts clamped
 # into the box. The best candidate by surrogate objective is returned; when
 # `dedup = true` candidates within `xtol_dup` of an already-evaluated point
-# are skipped in favour of the next-best candidate. The subproblem bounds are
-# restored before returning.
+# are skipped in favour of the next-best candidate.
+#
+# Most sub-solvers snapshot the variable bounds at workspace construction, so
+# restricting the box requires a fresh workspace over a boxed copy of the
+# model (the sub-model itself is never mutated, and neither is the caller's
+# model).
 function _solve_acquisition!(
     workspace::BayesOptWorkspace, warm, sob, nstarts, dedup, xtol_dup, tr_lb, tr_ub
 )
     @unpack sub_workspace, surrogates = workspace
     model = sub_workspace.model
-    orig_lb, orig_ub = getmin(model), getmax(model)
-    setmin!(model, tr_lb)
-    setmax!(model, tr_ub)
-    try
-        sub_workspace.x0 .= warm
-        r = optimize!(sub_workspace)
-        v = _surrogate_objective(model, r.minimizer)
-        candidates = [(x=collect(float.(r.minimizer)), r=r, v=v)]
-        if nstarts > 1 && sob !== nothing
-            for x1 in Iterators.take(sob, nstarts - 1)
-                x1 = clamp.(x1, tr_lb, tr_ub)  # keep the starts inside the box
-                sub_workspace.x0 .= x1
-                rr = optimize!(sub_workspace)
-                vv = _surrogate_objective(model, rr.minimizer)
-                push!(candidates, (x=collect(float.(rr.minimizer)), r=rr, v=vv))
+    boxed = tr_lb == getmin(model) && tr_ub == getmax(model)
+    ws = if boxed
+        sub_workspace
+    else
+        boxed_model = VecModel(
+            model.objective,
+            model.eq_constraints,
+            model.ineq_constraints,
+            model.sd_constraints,
+            copy(tr_lb),
+            copy(tr_ub),
+            model.init,
+            model.integer,
+        )
+        Workspace(
+            boxed_model,
+            workspace.sub_alg,
+            copy(warm);
+            options=workspace.options.sub_options,
+            # Reuse the live surrogates: constructing a fresh workspace without
+            # them would re-initialize (and re-evaluate) the expensive model.
+            surrogates=workspace.surrogates,
+            workspace.sub_kwargs...,
+        )
+    end
+    ws.x0 .= warm
+    r = optimize!(ws)
+    v = _surrogate_objective(model, r.minimizer)
+    candidates = [(x=collect(float.(r.minimizer)), r=r, v=v)]
+    if nstarts > 1 && sob !== nothing
+        for x1 in Iterators.take(sob, nstarts - 1)
+            x1 = clamp.(x1, tr_lb, tr_ub)  # keep the starts inside the box
+            ws.x0 .= x1
+            rr = optimize!(ws)
+            vv = _surrogate_objective(model, rr.minimizer)
+            push!(candidates, (x=collect(float.(rr.minimizer)), r=rr, v=vv))
+        end
+    end
+    sort!(candidates; by=c -> c.v)
+    if dedup && !isempty(surrogates)
+        for c in candidates
+            if _mindist(surrogates, c.x) >= xtol_dup
+                sub_workspace.x0 .= c.x
+                return c.r
             end
         end
-        sort!(candidates; by=c -> c.v)
-        if dedup && !isempty(surrogates)
-            for c in candidates
-                if _mindist(surrogates, c.x) >= xtol_dup
-                    sub_workspace.x0 .= c.x
-                    return c.r
-                end
-            end
-            # All candidates duplicate evaluated points; keep the best one
-            # anyway rather than wasting the iteration.
-            sub_workspace.x0 .= candidates[1].x
-            return candidates[1].r
-        else
-            sub_workspace.x0 .= candidates[1].x
-            return candidates[1].r
-        end
-    finally
-        setmin!(model, orig_lb)
-        setmax!(model, orig_ub)
+        # All candidates duplicate evaluated points; keep the best one
+        # anyway rather than wasting the iteration.
+        sub_workspace.x0 .= candidates[1].x
+        return candidates[1].r
+    else
+        sub_workspace.x0 .= candidates[1].x
+        return candidates[1].r
     end
 end
 
@@ -1330,7 +1418,9 @@ function optimize!(workspace::BayesOptWorkspace)
     minval = Inf
     minimizer = copy(x0)
     prevx = copy(x0)
-    lb, ub = getmin(smodel), getmax(smodel)
+    # Copies: the trust-region solves re-box fresh model copies and never
+    # touch these arrays, but the captures are kept defensive anyway.
+    lb, ub = copy(getmin(smodel)), copy(getmax(smodel))
     finite_bounds = all(isfinite, lb) && all(isfinite, ub)
     tol = Tolerance(; fabs=ftol, frel=ftol, infeas=ctol)
     trust_region &&
@@ -1414,10 +1504,19 @@ function optimize!(workspace::BayesOptWorkspace)
 
         convstate = ConvergenceState{Float64}()
         convstate.Δx = maximum(abs.(x[j] - prevx[j]) for j in 1:length(x))
-        convstate.Δf = abs(ob - prevm)
-        convstate.relΔf = abs((ob - prevm) / (prevm + ftol))
+        if isinf(prevm)
+            # The first iteration has no previous objective value to compare
+            # against (minval is still Inf); report zero deltas instead of
+            # NaN/Inf.
+            convstate.Δf = 0.0
+            convstate.relΔf = 0.0
+        else
+            convstate.Δf = abs(ob - prevm)
+            convstate.relΔf = abs((ob - prevm) / (prevm + ftol))
+        end
         convstate.infeas = max(maximum(ineq; init=0.0), 0.0, maximum(abs.(eq); init=0.0))
-        convstate.converged = feasible && abs((ob - prevm) / (prevm + ftol)) <= ftol
+        convstate.converged =
+            feasible && !isinf(prevm) && abs((ob - prevm) / (prevm + ftol)) <= ftol
 
         if callback !== NoCallback()
             callback(
@@ -1452,14 +1551,26 @@ function optimize!(workspace::BayesOptWorkspace)
         foreach(surrogates) do s
             return s.mode = :exact
         end
-        sub_workspace.x0 .= minimizer
-        r = optimize!(sub_workspace)
+        # Defer the MLE refits while the sub-solve is active: the refit runs
+        # its own optimizer solve, which must not nest inside the sub-solver
+        # (Ipopt is not reentrant).
+        foreach(surrogates) do s
+            return s.defer_fit = true
+        end
+        try
+            sub_workspace.x0 .= minimizer
+            r = optimize!(sub_workspace)
+        finally
+            foreach(surrogates) do s
+                s.mode = :interval
+                return s.defer_fit = false
+            end
+        end
+        # Run any refits that became due while the sub-solve was active.
+        foreach(s -> (_pending_fit(s) && fit_mle!(s)), surrogates)
         if r.minimum <= minval
             minval = r.minimum
             minimizer = copy(r.minimizer)
-        end
-        foreach(surrogates) do s
-            return s.mode = :interval
         end
     end
 
@@ -1547,6 +1658,7 @@ function Workspace(
         surrogates,
         callback,
         Any[],
+        sub_kwargs,
     )
 end
 
@@ -1558,7 +1670,9 @@ function reset!(w::BayesOptWorkspace, x0=nothing)
         w.sub_alg;
         hint="The surrogate subproblem has features that the sub-optimizer cannot handle.",
     )
-    w.sub_workspace = Workspace(smodel, w.sub_alg, w.x0; options=w.options.sub_options)
+    w.sub_workspace = Workspace(
+        smodel, w.sub_alg, w.x0; options=w.options.sub_options, w.sub_kwargs...
+    )
     w.surrogates = surrogates
     empty!(w.history)
     return w

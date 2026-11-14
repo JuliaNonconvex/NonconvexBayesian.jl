@@ -30,7 +30,7 @@ struct CoKrigingPosterior
     zv::Vector{Float64}   # value observations
     Z∇::Matrix{Float64}   # n_obs × n_in gradient observations
     L::Cholesky{Float64,Matrix{Float64}}  # Cholesky of (K + Λ)
-    α::Vector{Float64}    # (K + Λ)⁻¹ z
+    α::Vector{Float64}    # (K + Λ)⁻¹ (z − [μ0·1_N; 0]) (centered by the prior mean)
     nval::Float64         # observation noise on values
     ngrad::Float64        # jitter on gradient observations
 end
@@ -88,7 +88,10 @@ function CoKrigingPosterior(k, μ0, X, y, ∇y, nval, ngrad)
     # Cholesky numerically positive definite.
     A = Symmetric(K + Λ) + sqrt(eps()) * max(dmax, 1.0) * I
     L = cholesky(A; check=false)
-    α = L \ z
+    # Center the value observations by the constant prior mean (the gradient
+    # prior mean is 0), so that `mean(pg, x) = μ0 + k*(x)ᵀ α` is the exact
+    # GP posterior under the constant-mean prior.
+    α = L \ (z - vcat(fill(μ0, N), zeros(N * n)))
     return CoKrigingPosterior(k, μ0, X, n, y, ∇y, L, α, nval, ngrad)
 end
 
@@ -182,6 +185,7 @@ mutable struct CoKrigingSurrogate <: AbstractGPSurrogate
     grad_source::Union{Symbol,Function}
     counter::Int
     cache::PosteriorCache
+    defer_fit::Bool
 end
 function CoKrigingSurrogate(
     f,
@@ -233,11 +237,16 @@ function CoKrigingSurrogate(
         grad_source,
         0,
         (posterior=nothing, dirty=true),
+        false,
     )
     if grad_source !== :none
         ∇ = _grad_observation(s, x)
-        for i in 1:N
-            s.∇y[i] = vcat(s.∇y[i], ∇[i:i, :])
+        if all(isfinite, ∇)
+            for i in 1:N
+                s.∇y[i] = vcat(s.∇y[i], ∇[i:i, :])
+            end
+        else
+            @warn "Skipping non-finite initial gradient observation." maxlog = 10
         end
     end
     return s
