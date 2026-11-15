@@ -1,5 +1,11 @@
 # NEWS
 
+## 0.2.4
+
+- Fixed `CoKrigingSurrogate(grad_source = :none)` crashing on the first
+  interval-mode prediction: without gradient observations the surrogate now
+  falls back to a value-only GP posterior.
+
 ## 0.2.3
 
 - The TuRBO trust region actually restricts the acquisition solves: the
