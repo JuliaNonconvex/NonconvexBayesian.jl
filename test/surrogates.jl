@@ -403,6 +403,22 @@ end
     @test pbn(ChainRulesCore.ZeroTangent())[2] isa ChainRulesCore.ZeroTangent
 end
 
+@testitem "Co-kriging grad_source=:none predicts through the value-only fallback" begin
+    using NonconvexBayesian, Test
+    using IntervalArithmetic
+
+    # Regression test: with `grad_source = :none` no gradient rows are ever
+    # recorded, so the joint co-kriging posterior has an N×0 gradient block
+    # and its constructor used to error on the first interval-mode prediction.
+    # The surrogate must fall back to a value-only GP posterior.
+    fq(x) = x[1]^2 + x[2]^2
+    s = NonconvexBayesian.co_kriging_surrogate(fq, [1.0, 1.0]; grad_source=:none)
+    s.mode = :interval
+    iv = s([1.2, 1.2])
+    @test isfinite(inf(iv)) && isfinite(sup(iv))
+    @test inf(iv) <= sup(iv)
+end
+
 @testitem "EI/PI near-zero variance branches" begin
     using NonconvexBayesian, Test
     using AbstractGPs

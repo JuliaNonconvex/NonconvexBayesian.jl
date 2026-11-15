@@ -267,7 +267,14 @@ end
 function _predict(s::CoKrigingSurrogate, x)
     if s.cache.dirty || s.cache.posterior === nothing
         posts = map(1:s.N) do i
-            ys = eltype(s.y) <: Real ? s.y : getindex.(s.y, i)
+            ys = _per_gp_data(s.y)[i]
+            if s.grad_source === :none
+                # With `grad_source = :none` no gradient rows are ever recorded
+                # (s.∇y stays N×0), so the joint co-kriging posterior cannot be
+                # built. Fall back to a value-only GP posterior.
+                gp = GP(AbstractGPs.ConstMean(s.mean_const), s.kernel)
+                return posterior(gp(s.X, s.noise), ys)
+            end
             return CoKrigingPosterior(
                 s.kernel, s.mean_const, s.X, ys, s.∇y[i], s.noise, s.grad_noise
             )

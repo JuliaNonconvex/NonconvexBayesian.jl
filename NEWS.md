@@ -1,5 +1,44 @@
 # NEWS
 
+## 0.2.3
+
+- The TuRBO trust region actually restricts the acquisition solves: the
+  subproblem is solved in a freshly boxed workspace instead of mutating the
+  surrogate model's bounds (most sub-solvers snapshot the bounds at workspace
+  construction, so the mutation had no effect on the solve while corrupting
+  the model's — and, through the shared arrays, the caller's — bounds).
+- `L` now doubles only after `tr_success_max` *consecutive* improvements, as
+  documented (it previously doubled on every improvement, making
+  `tr_success_max` a no-op).
+- The co-kriging posterior mean now centers the value observations by the
+  fitted constant prior mean `μ0` (`μ0 + k*ᵀ(K+Λ)⁻¹(z − μ0·1_N)`); the
+  uncentered form was biased for any nonzero `μ0`.
+- An observation with a non-finite gradient is now skipped *entirely* (value
+  and gradient), keeping the value/gradient rows aligned; previously the
+  value was recorded without its gradient row and the next prediction crashed
+  with a dimension mismatch.
+- The exact-mode pullback reuses the value/gradient recorded by the forward
+  pass instead of re-evaluating the expensive function (plus a full
+  ForwardDiff gradient) on every gradient call.
+- Hyperparameter refits are deferred while the postoptimize sub-solve is
+  active (they run right after it), so the refit's own Ipopt solve never
+  nests inside the sub-solver.
+- The first BO iteration no longer reports `relΔf = NaN`/`Δf = Inf` (there is
+  no previous objective value to compare against yet).
+- `get_lo(::ForwardDiff.Dual)` preserves the input dual's tag (it previously
+  constructed a `Dual{Nothing}`) and no longer forces non-interval partials
+  through `Float64`.
+- `reset!` forwards the sub-solver kwargs captured at workspace construction.
+- The surrogate constructors validate the initial gradient observation
+  (skipping non-finite ones, like `_observe!` does).
+- `tr_fail_max = 0` is now rejected (it made the region halve on every
+  iteration).
+
+## 0.2.2
+
+- Allow ForwardDiff 1 and pin Zygote below 0.7.17; codecov OIDC/v5 uploads;
+  docs destination persistence; logo and README polish.
+
 ## 0.2.1
 
 - Deterministic and reproducible test runs: the runtests prelude pins BLAS
@@ -9,7 +48,7 @@
   assertions no longer depend on the nonconvex hyperparameter-MLE
   trajectory across machines.
 
-## 0.3.0
+## 0.2.0
 
 ### Breaking changes
 
@@ -57,40 +96,6 @@
   `update_surrogates!`, `ZeroOrderGPSurrogate`, `FirstOrderGPSurrogate` and
   the acquisition types.
 
-### Bug fixes
-
-- The TuRBO trust region actually restricts the acquisition solves: the
-  subproblem is solved in a freshly boxed workspace instead of mutating the
-  surrogate model's bounds (most sub-solvers snapshot the bounds at workspace
-  construction, so the mutation had no effect on the solve while corrupting
-  the model's — and, through the shared arrays, the caller's — bounds).
-- `L` now doubles only after `tr_success_max` *consecutive* improvements, as
-  documented (it previously doubled on every improvement, making
-  `tr_success_max` a no-op).
-- The co-kriging posterior mean now centers the value observations by the
-  fitted constant prior mean `μ0` (`μ0 + k*ᵀ(K+Λ)⁻¹(z − μ0·1_N)`); the
-  uncentered form was biased for any nonzero `μ0`.
-- An observation with a non-finite gradient is now skipped *entirely* (value
-  and gradient), keeping the value/gradient rows aligned; previously the
-  value was recorded without its gradient row and the next prediction crashed
-  with a dimension mismatch.
-- The exact-mode pullback reuses the value/gradient recorded by the forward
-  pass instead of re-evaluating the expensive function (plus a full
-  ForwardDiff gradient) on every gradient call.
-- Hyperparameter refits are deferred while the postoptimize sub-solve is
-  active (they run right after it), so the refit's own Ipopt solve never
-  nests inside the sub-solver.
-- The first BO iteration no longer reports `relΔf = NaN`/`Δf = Inf` (there is
-  no previous objective value to compare against yet).
-- `get_lo(::ForwardDiff.Dual)` preserves the input dual's tag (it previously
-  constructed a `Dual{Nothing}`) and no longer forces non-interval partials
-  through `Float64`.
-- `reset!` forwards the sub-solver kwargs captured at workspace construction.
-- The surrogate constructors validate the initial gradient observation
-  (skipping non-finite ones, like `_observe!` does).
-- `tr_fail_max = 0` is now rejected (it made the region halve on every
-  iteration).
-
 ### Maintenance
 
 - The hyperparameter optimizer defaults to Ipopt (`fit_optimizer` overrides
@@ -106,6 +111,17 @@
   positive definite when the optimizer explores extreme kernel amplitudes,
   and the fitted-noise floor was raised to `1e-6` (above Ipopt's default
   bound relaxation, which silently erased the previous `1e-8` floor).
+
+## 0.1.9
+
+- Added real-gradient and zero-gradient rrules for the surrogate callable;
+  fixed `Dual` partial types and `get_lo` handling of ForwardDiff dual
+  seeds; unit tests for the surrogate gradient rules and NaN returns.
+
+## 0.1.8
+
+- Cache GP posteriors and skip non-finite observations, with regression
+  tests; added NEWS.md.
 
 ## 0.1.7
 
