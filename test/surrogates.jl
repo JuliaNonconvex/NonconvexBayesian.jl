@@ -347,6 +347,46 @@ end
     s.mode = :interval
     @test NonconvexBayesian._mindist([s], [1.1, 1.1]) < 1e-8
     @test NonconvexBayesian._mindist([s], [5.0, 5.0]) > 1.0
+    @test NonconvexBayesian._mindist(s, [1.1, 1.1]) < 1e-8
+end
+
+@testitem "Exact-mode duplicate observations are skipped when deduplicate=true" begin
+    using NonconvexBayesian, Test
+
+    fq(x) = x[1]^2 + x[2]^2
+    # deduplicate = true (the default): re-evaluating a point within
+    # xtol_dup of an existing observation leaves the observation arrays
+    # unchanged (near-duplicates used to make the GP covariance singular).
+    s = NonconvexBayesian.ZeroOrderGPSurrogate(
+        fq, [1.0, 1.0]; mode=:exact, deduplicate=true, xtol_dup=1e-4
+    )
+    n = length(s.X)
+    s([1.0, 1.0])         # exact duplicate of the initial observation
+    s([1.0 + 1e-6, 1.0])  # within xtol_dup
+    @test length(s.X) == n
+    @test length(s.y) == n
+    @test s.counter == 2  # skipped observations are still counted evaluations
+    s([3.0, 3.0])         # far away: recorded
+    @test length(s.X) == n + 1
+    @test length(s.y) == n + 1
+    @test s.counter == 3
+
+    # Value/gradient rows stay aligned for gradient-enhanced surrogates.
+    sf = NonconvexBayesian.first_order_surrogate(
+        fq, [1.0, 1.0]; deduplicate=true, xtol_dup=1e-4
+    )
+    sf.mode = :exact
+    sf([1.0, 1.0])
+    @test length(sf.X) == 1
+    @test size(sf.∇y[1], 1) == length(sf.X)
+
+    # deduplicate = false keeps the previous behaviour: duplicates recorded.
+    s2 = NonconvexBayesian.ZeroOrderGPSurrogate(
+        fq, [1.0, 1.0]; mode=:exact, deduplicate=false, xtol_dup=1e-4
+    )
+    s2([1.0, 1.0])
+    @test length(s2.X) == 2
+    @test length(s2.y) == 2
 end
 
 @testitem "Defensive paths" begin
