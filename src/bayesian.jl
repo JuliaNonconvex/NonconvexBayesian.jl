@@ -614,6 +614,17 @@ end
 # Whether a surrogate records gradient observations in exact mode.
 _records_gradients(::AbstractGPSurrogate) = false
 
+# The recorded location of an exact-mode observation: near-duplicates of
+# existing observations are nudged by a fraction of `xtol_dup` so the GP
+# covariance stays well-conditioned (skipping them broke the BO loop's
+# bookkeeping, and recording them verbatim made the covariance singular).
+function _nudge_location(s::AbstractGPSurrogate, x)
+    if s.deduplicate && _mindist(s, x) < s.xtol_dup
+        return x .+ max(s.xtol_dup / 4, eps(Float64)) .* (abs.(x) .+ 1.0)
+    end
+    return x
+end
+
 function _observe!(s::AbstractGPSurrogate, x)
     y = s.f(x)
     if !(y isa Real ? isfinite(y) : all(isfinite, y))
@@ -627,11 +638,7 @@ function _observe!(s::AbstractGPSurrogate, x)
     # the BO loop's bookkeeping, so the observation is recorded at a
     # location nudged away from the existing point by a fraction of
     # `xtol_dup` (the evaluation is still counted in `fcalls` below).
-    x_rec = if s.deduplicate && _mindist(s, x) < s.xtol_dup
-        x .+ max(s.xtol_dup / 4, eps(Float64)) .* (abs.(x) .+ 1.0)
-    else
-        x
-    end
+    x_rec = _nudge_location(s, x)
     ∇ = nothing
     if _records_gradients(s) && s.grad_source !== :none
         ∇ = _grad_observation(s, x)
@@ -773,7 +780,7 @@ end
 # evaluation, or `nothing` when `x` was not just recorded (e.g. the
 # observation was skipped because it was non-finite).
 function _last_observed_value(s::AbstractGPSurrogate, x)
-    (!isempty(s.X) && s.X[end] == x) || return nothing
+    (!isempty(s.X) && s.X[end] == _nudge_location(s, x)) || return nothing
     return eltype(s.y) <: Real ? s.y[end] : collect(s.y[end])
 end
 
@@ -783,7 +790,7 @@ end
 function _last_observed_jacobian(s::AbstractGPSurrogate, x)
     _records_gradients(s) || return nothing
     s.grad_source === :none && return nothing
-    (!isempty(s.X) && s.X[end] == x) || return nothing
+    (!isempty(s.X) && s.X[end] == _nudge_location(s, x)) || return nothing
     all(y -> size(y, 1) == length(s.X), s.∇y) || return nothing
     return reduce(vcat, (reshape(s.∇y[i][end, :], 1, :) for i in 1:s.N))
 end
