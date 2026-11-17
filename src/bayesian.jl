@@ -157,6 +157,11 @@ Keyword arguments:
   vectors) on the hyperparameters,
 - `fit_optimizer = nothing`: optional `(alg, options)` tuple used for the
   hyperparameter optimization; defaults to Ipopt.
+- `deduplicate = true`, `xtol_dup = 1e-8`: when `deduplicate` is true,
+  exact-mode evaluations within `xtol_dup` of an already-recorded
+  observation are skipped instead of appended to the observation arrays
+  (near-duplicate observations make the GP covariance numerically
+  singular).
 """
 mutable struct ZeroOrderGPSurrogate <: AbstractGPSurrogate
     f::Function
@@ -181,6 +186,12 @@ mutable struct ZeroOrderGPSurrogate <: AbstractGPSurrogate
     # (used while a sub-solve is active, e.g. during `postoptimize`, so that
     # the refit's own optimizer solve never nests inside the sub-solver).
     defer_fit::Bool
+    # Whether exact-mode evaluations within `xtol_dup` of an existing
+    # observation are skipped instead of recorded (near-duplicate
+    # observations, e.g. from sub-solver line searches, make the GP
+    # covariance numerically singular).
+    deduplicate::Bool
+    xtol_dup::Float64
 end
 function ZeroOrderGPSurrogate(
     f,
@@ -200,6 +211,8 @@ function ZeroOrderGPSurrogate(
     fit_max_iter=20,
     fit_bounds=nothing,
     fit_optimizer=nothing,
+    deduplicate=true,
+    xtol_dup=1e-8,
 )
     @assert noise > 0
     gps = [GP(AbstractGPs.ConstMean(0.0), kernel) for _ in 1:length(y[1])]
@@ -224,6 +237,8 @@ function ZeroOrderGPSurrogate(
         0,
         (posterior=nothing, dirty=true),
         false,
+        deduplicate,
+        xtol_dup,
     )
 end
 
@@ -280,6 +295,9 @@ mutable struct FirstOrderGPSurrogate <: AbstractGPSurrogate
     cache::PosteriorCache
     ∇cache::PosteriorCache
     defer_fit::Bool
+    # See `ZeroOrderGPSurrogate` for the exact-mode duplicate-point filter.
+    deduplicate::Bool
+    xtol_dup::Float64
 end
 function FirstOrderGPSurrogate(
     f,
@@ -301,6 +319,8 @@ function FirstOrderGPSurrogate(
     fit_optimizer=nothing,
     grad_source=:forwarddiff,
     fit_grads=true,
+    deduplicate=true,
+    xtol_dup=1e-8,
 )
     @assert noise > 0
     @assert grad_source isa Symbol || grad_source isa Function
@@ -334,6 +354,8 @@ function FirstOrderGPSurrogate(
         (posterior=nothing, dirty=true),
         (posterior=nothing, dirty=true),
         false,
+        deduplicate,
+        xtol_dup,
     )
     if grad_source !== :none
         ∇ = _grad_observation(s, x)
@@ -592,12 +614,31 @@ end
 # Whether a surrogate records gradient observations in exact mode.
 _records_gradients(::AbstractGPSurrogate) = false
 
+# The recorded location of an exact-mode observation: near-duplicates of
+# existing observations are nudged by a fraction of `xtol_dup` so the GP
+# covariance stays well-conditioned (skipping them broke the BO loop's
+# bookkeeping, and recording them verbatim made the covariance singular).
+function _nudge_location(s::AbstractGPSurrogate, x)
+    if s.deduplicate && _mindist(s, x) < s.xtol_dup
+        return x .+ max(s.xtol_dup / 4, eps(Float64)) .* (abs.(x) .+ 1.0)
+    end
+    return x
+end
+
 function _observe!(s::AbstractGPSurrogate, x)
     y = s.f(x)
     if !(y isa Real ? isfinite(y) : all(isfinite, y))
         @warn "Skipping non-finite surrogate observation." maxlog = 10
         return y isa Real ? nai() : map(_ -> nai(), y)
     end
+    # Near-duplicate guard: exact-mode sub-solves (line searches, warm
+    # starts, postoptimize) revisit points that are already in the
+    # observation set. Recording them verbatim makes the GP covariance
+    # numerically singular (PosDefException risk), and skipping them broke
+    # the BO loop's bookkeeping, so the observation is recorded at a
+    # location nudged away from the existing point by a fraction of
+    # `xtol_dup` (the evaluation is still counted in `fcalls` below).
+    x_rec = _nudge_location(s, x)
     ∇ = nothing
     if _records_gradients(s) && s.grad_source !== :none
         ∇ = _grad_observation(s, x)
@@ -609,7 +650,7 @@ function _observe!(s::AbstractGPSurrogate, x)
             return interval.(y, y)
         end
     end
-    s.X = vcat(s.X, [x])
+    s.X = vcat(s.X, [x_rec])
     s.y = vcat(s.y, [y])
     set_cache!(s, (posterior=s.cache.posterior, dirty=true))
     if ∇ !== nothing
@@ -626,7 +667,6 @@ function _observe!(s::AbstractGPSurrogate, x)
     end
     return interval.(y, y)
 end
-
 # Whether a hyperparameter refit is due according to the `every`/`skip`
 # schedule (and not deferred, e.g. while a sub-solve is active).
 function _pending_fit(s::AbstractGPSurrogate)
@@ -740,7 +780,7 @@ end
 # evaluation, or `nothing` when `x` was not just recorded (e.g. the
 # observation was skipped because it was non-finite).
 function _last_observed_value(s::AbstractGPSurrogate, x)
-    (!isempty(s.X) && s.X[end] == x) || return nothing
+    (!isempty(s.X) && s.X[end] == _nudge_location(s, x)) || return nothing
     return eltype(s.y) <: Real ? s.y[end] : collect(s.y[end])
 end
 
@@ -750,7 +790,7 @@ end
 function _last_observed_jacobian(s::AbstractGPSurrogate, x)
     _records_gradients(s) || return nothing
     s.grad_source === :none && return nothing
-    (!isempty(s.X) && s.X[end] == x) || return nothing
+    (!isempty(s.X) && s.X[end] == _nudge_location(s, x)) || return nothing
     all(y -> size(y, 1) == length(s.X), s.∇y) || return nothing
     return reduce(vcat, (reshape(s.∇y[i][end, :], 1, :) for i in 1:s.N))
 end
@@ -1071,7 +1111,10 @@ Options of the [`BayesOptAlg`](@ref) Bayesian-optimization loop. `sub_options`
 - `verbose = false`, `keep_all = false`: per-iteration logging and query
   trajectory recording.
 - `acq_multistart = 1`, `deduplicate = true`, `xtol_dup = 1e-8`:
-  acquisition multistart and duplicate-point filtering.
+  acquisition multistart and duplicate-point filtering. When `deduplicate`
+  is true, exact-mode evaluations within `xtol_dup` of an already-recorded
+  observation are also skipped instead of being appended to the surrogates'
+  observation arrays.
 - `trust_region = false`, `tr_length_init = 0.8`, `tr_min_factor = 1/32`,
   `tr_success_max = 3`, `tr_fail_max = nothing`: TuRBO-style local
   trust-region restarts (requires finite variable bounds).
@@ -1169,6 +1212,10 @@ function BayesOptOptions(;
             fit_max_iter=fit_max_iter,
             fit_bounds=fit_bounds,
             fit_optimizer=fit_optimizer,
+            # Forwarded to the surrogates: skip exact-mode observations
+            # within xtol_dup of an already-recorded point.
+            deduplicate=deduplicate,
+            xtol_dup=xtol_dup,
         ),
     )
 end
@@ -1323,12 +1370,20 @@ _surrogate_objective(model, x) = begin
     return v isa Real ? v : sum(v)
 end
 
-_mindist(surrogates, x) = begin
+# The minimum Euclidean distance from `x` to the observations of one
+# surrogate.
+function _mindist(s::AbstractGPSurrogate, x)
+    d = Inf
+    for xk in s.X
+        d = min(d, norm(xk .- x))
+    end
+    return d
+end
+# ... or to the observations across a collection of surrogates.
+function _mindist(surrogates, x)
     d = Inf
     for s in surrogates
-        for xk in s.X
-            d = min(d, norm(xk .- x))
-        end
+        d = min(d, _mindist(s, x))
     end
     return d
 end

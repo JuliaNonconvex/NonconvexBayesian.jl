@@ -186,6 +186,9 @@ mutable struct CoKrigingSurrogate <: AbstractGPSurrogate
     counter::Int
     cache::PosteriorCache
     defer_fit::Bool
+    # See `ZeroOrderGPSurrogate` for the exact-mode duplicate-point filter.
+    deduplicate::Bool
+    xtol_dup::Float64
 end
 function CoKrigingSurrogate(
     f,
@@ -207,6 +210,8 @@ function CoKrigingSurrogate(
     fit_bounds=nothing,
     fit_optimizer=nothing,
     grad_source=:forwarddiff,
+    deduplicate=true,
+    xtol_dup=1e-8,
 )
     @assert noise > 0
     @assert grad_noise > 0
@@ -238,6 +243,8 @@ function CoKrigingSurrogate(
         0,
         (posterior=nothing, dirty=true),
         false,
+        deduplicate,
+        xtol_dup,
     )
     if grad_source !== :none
         ∇ = _grad_observation(s, x)
