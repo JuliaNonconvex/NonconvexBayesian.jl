@@ -350,26 +350,33 @@ end
     @test NonconvexBayesian._mindist(s, [1.1, 1.1]) < 1e-8
 end
 
-@testitem "Exact-mode duplicate observations are skipped when deduplicate=true" begin
+@testitem "Exact-mode near-duplicate observations are nudged when deduplicate=true" begin
     using NonconvexBayesian, Test
 
     fq(x) = x[1]^2 + x[2]^2
     # deduplicate = true (the default): re-evaluating a point within
-    # xtol_dup of an existing observation leaves the observation arrays
-    # unchanged (near-duplicates used to make the GP covariance singular).
+    # xtol_dup of an existing observation records the observation at a
+    # nudged location (verbatim near-duplicates made the GP covariance
+    # singular, and skipping them broke the BO loop's bookkeeping).
     s = NonconvexBayesian.ZeroOrderGPSurrogate(
         fq, [1.0, 1.0]; mode=:exact, deduplicate=true, xtol_dup=1e-4
     )
     n = length(s.X)
     s([1.0, 1.0])         # exact duplicate of the initial observation
     s([1.0 + 1e-6, 1.0])  # within xtol_dup
-    @test length(s.X) == n
-    @test length(s.y) == n
-    @test s.counter == 2  # skipped observations are still counted evaluations
-    s([3.0, 3.0])         # far away: recorded
-    @test length(s.X) == n + 1
-    @test length(s.y) == n + 1
+    @test length(s.X) == n + 2 # still recorded (the BO loop relies on it)
+    @test length(s.y) == n + 2
+    @test s.counter == 2       # evaluations are counted
+    @test s.X[n + 1] != s.X[1] # nudged, not verbatim
+    @test norm(s.X[n + 1] - s.X[1]) < s.xtol_dup
+    s([3.0, 3.0])         # far away: recorded verbatim
+    @test length(s.X) == n + 3
     @test s.counter == 3
+    @test s.X[n + 3] == [3.0, 3.0]
+    # The posterior remains computable (no singular covariance).
+    s.mode = :interval
+    iv = s([1.2, 1.2])
+    @test isfinite(NonconvexBayesian.get_lo(iv))
 
     # Value/gradient rows stay aligned for gradient-enhanced surrogates.
     sf = NonconvexBayesian.first_order_surrogate(
@@ -377,16 +384,18 @@ end
     )
     sf.mode = :exact
     sf([1.0, 1.0])
-    @test length(sf.X) == 1
+    @test length(sf.X) == 2
     @test size(sf.∇y[1], 1) == length(sf.X)
 
-    # deduplicate = false keeps the previous behaviour: duplicates recorded.
+    # deduplicate = false keeps the previous behaviour: duplicates recorded
+    # verbatim.
     s2 = NonconvexBayesian.ZeroOrderGPSurrogate(
         fq, [1.0, 1.0]; mode=:exact, deduplicate=false, xtol_dup=1e-4
     )
     s2([1.0, 1.0])
     @test length(s2.X) == 2
     @test length(s2.y) == 2
+    @test s2.X[2] == [1.0, 1.0]
 end
 
 @testitem "Defensive paths" begin

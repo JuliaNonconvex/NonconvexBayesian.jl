@@ -620,15 +620,17 @@ function _observe!(s::AbstractGPSurrogate, x)
         @warn "Skipping non-finite surrogate observation." maxlog = 10
         return y isa Real ? nai() : map(_ -> nai(), y)
     end
-    # The evaluation happened (and is counted in `fcalls`) even when the
-    # observation is not recorded.
-    s.counter += 1
-    # Near-duplicate guard: exact-mode sub-solves (line searches, warm starts,
-    # postoptimize) revisit points that are already in the observation set.
-    # Recording them makes the GP covariance numerically singular
-    # (PosDefException risk), so they are skipped when deduplication is on.
-    if s.deduplicate && _mindist(s, x) < s.xtol_dup
-        return interval.(y, y)
+    # Near-duplicate guard: exact-mode sub-solves (line searches, warm
+    # starts, postoptimize) revisit points that are already in the
+    # observation set. Recording them verbatim makes the GP covariance
+    # numerically singular (PosDefException risk), and skipping them broke
+    # the BO loop's bookkeeping, so the observation is recorded at a
+    # location nudged away from the existing point by a fraction of
+    # `xtol_dup` (the evaluation is still counted in `fcalls` below).
+    x_rec = if s.deduplicate && _mindist(s, x) < s.xtol_dup
+        x .+ max(s.xtol_dup / 4, eps(Float64)) .* (abs.(x) .+ 1.0)
+    else
+        x
     end
     ∇ = nothing
     if _records_gradients(s) && s.grad_source !== :none
@@ -641,7 +643,7 @@ function _observe!(s::AbstractGPSurrogate, x)
             return interval.(y, y)
         end
     end
-    s.X = vcat(s.X, [x])
+    s.X = vcat(s.X, [x_rec])
     s.y = vcat(s.y, [y])
     set_cache!(s, (posterior=s.cache.posterior, dirty=true))
     if ∇ !== nothing
@@ -652,12 +654,12 @@ function _observe!(s::AbstractGPSurrogate, x)
             set_∇cache!(s, (posterior=s.∇cache.posterior, dirty=true))
         end
     end
+    s.counter += 1
     if _pending_fit(s)
         fit_mle!(s)
     end
     return interval.(y, y)
 end
-
 # Whether a hyperparameter refit is due according to the `every`/`skip`
 # schedule (and not deferred, e.g. while a sub-solve is active).
 function _pending_fit(s::AbstractGPSurrogate)
