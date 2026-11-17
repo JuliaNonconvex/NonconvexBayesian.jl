@@ -1,5 +1,12 @@
 # NEWS
 
+## 0.2.5
+
+- Exact-mode near-duplicate observations are recorded at a location nudged
+  by a fraction of `xtol_dup` instead of verbatim, keeping the GP covariance
+  well-conditioned during postoptimize without disturbing the BO loop's
+  bookkeeping; the exact-mode pullback reuses the nudged observation.
+
 ## 0.2.4
 
 - Fixed `CoKrigingSurrogate(grad_source = :none)` crashing on the first
