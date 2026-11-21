@@ -1,5 +1,8 @@
 # NEWS
 
+## 0.2.6
+
+- Docs: package-name section titles and left-aligned logos (no code changes).
 ## 0.2.5
 
 - Exact-mode near-duplicate observations are recorded at a location nudged
