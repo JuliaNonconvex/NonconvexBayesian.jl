@@ -509,7 +509,8 @@ function _fit_gp_group!(
         l2 = length(xs_lbs_ubs_uns_2[i][1])
         un2 = xs_lbs_ubs_uns_2[i][4]
         out = GP(
-            un1(θ[(offset + 1):(offset + l1)]), un2(θ[(offset + l1 + 1):(offset + l1 + l2)])
+            un1(θ[(offset + 1):(offset + l1)]),
+            un2(θ[(offset + l1 + 1):(offset + l1 + l2)]),
         )
         offset += l1 + l2
         return out
