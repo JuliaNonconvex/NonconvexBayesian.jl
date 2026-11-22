@@ -1,5 +1,9 @@
 # NEWS
 
+## 0.2.7
+
+- Pin `Interval` to IntervalArithmetic: NonconvexCore 2.3 exports an
+  `Interval` function-in-set, so the binding is imported explicitly.
 ## 0.2.6
 
 - Docs: package-name section titles and left-aligned logos (no code changes).
