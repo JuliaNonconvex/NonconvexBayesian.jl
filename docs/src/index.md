@@ -1,7 +1,5 @@
 # NonconvexBayesian
 
-![JuliaNonconvex logo](https://raw.githubusercontent.com/JuliaNonconvex/NonconvexBayesian.jl/master/docs/src/assets/logo.png)
-
 
 
 `NonconvexBayesian` provides Gaussian-process surrogate-assisted (Bayesian)
