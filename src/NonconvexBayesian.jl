@@ -21,6 +21,9 @@ export BayesOptOptions,
     get_lo
 
 using Reexport, AbstractGPs, IntervalArithmetic, Parameters
+# `Interval` is IntervalArithmetic's type here: NonconvexCore also exports an
+# `Interval` (a function-in-set), so the binding is pinned explicitly.
+import IntervalArithmetic: Interval
 using NonconvexIpopt: IpoptAlg, IpoptOptions
 using Sobol, ChainRulesCore
 @reexport using NonconvexCore
