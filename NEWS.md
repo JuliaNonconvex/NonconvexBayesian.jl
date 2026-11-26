@@ -1,5 +1,9 @@
 # NEWS
 
+## 0.2.9
+
+- Allow NonconvexIpopt 0.9 (the previous compat pinned it below 0.9, forcing co-resolved environments onto the outdated 0.8.x line).
+
 ## 0.2.8
 
 - Docs: the logo now appears only in the sidebar, not in the page body.
